@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using HandWritten_OCR.Abstract;
 using HandWritten_OCR.Services;
 using System.IO;
 using System.Windows;
@@ -7,55 +8,52 @@ using System.Windows.Media.Imaging;
 
 namespace HandWritten_OCR.ViewModels;
 
-public partial class MainViewModel : ObservableObject
+public partial class MainViewModel : ViewBaseModel
 {
     private readonly IOcrService _ocrService;
-    private readonly IFileDialogService _fileDialogService;
     private readonly string _modelFolder;
     private string? _currentImagePath;
 
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(RunOcrCommand))]
     private BitmapSource? _previewImage;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HasResult))]
     private string _ocrText = string.Empty;
 
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(RunOcrCommand))]
-    [NotifyCanExecuteChangedFor(nameof(OpenImageCommand))]
+    private bool _hasResult;
+
+    [ObservableProperty]
     private bool _isProcessing;
 
     [ObservableProperty]
     private string _statusMessage = "Ready — open or drop an image to begin.";
 
-    public bool HasResult => !string.IsNullOrWhiteSpace(OcrText);
-
-    public MainViewModel(IOcrService ocrService, IFileDialogService fileDialogService, string modelFolder)
+    public MainViewModel()
     {
-        _ocrService = ocrService;
-        _fileDialogService = fileDialogService;
-        _modelFolder = modelFolder;
+        _ocrService = new TrOcrService();
+        _modelFolder = Path.Combine(AppContext.BaseDirectory, "models");
     }
 
-    [RelayCommand(CanExecute = nameof(CanOpenImage))]
+    [RelayCommand]
     private async Task OpenImageAsync()
     {
-        var path = _fileDialogService.OpenImageFile();
+        if (IsProcessing) return;
+        string path = GetFilePath("Image Files", "*.png;*.jpg;*.jpeg;*.bmp;*.tiff;*.gif", "Open Image");
         if (path is not null)
+        {
             await LoadImageAsync(path);
+        }
     }
 
-    private bool CanOpenImage() => !IsProcessing;
-
-    [RelayCommand(CanExecute = nameof(CanRunOcr))]
+    [RelayCommand]
     private async Task RunOcrAsync()
     {
-        if (_currentImagePath is null) return;
+        if (_currentImagePath is null || IsProcessing) return;
 
         IsProcessing = true;
         OcrText = string.Empty;
+        HasResult = false;
         StatusMessage = "Running OCR...";
 
         try
@@ -66,8 +64,10 @@ public partial class MainViewModel : ObservableObject
                 await _ocrService.LoadModelsAsync(_modelFolder);
             }
 
-            var result = await _ocrService.RecognizeAsync(_currentImagePath);
+            string result = await _ocrService.RecognizeAsync(_currentImagePath);
             OcrText = result;
+            HasResult = !string.IsNullOrWhiteSpace(result);
+
             StatusMessage = result.Length > 0
                 ? $"Done — {result.Length} characters recognized."
                 : "Done — no text detected.";
@@ -76,14 +76,13 @@ public partial class MainViewModel : ObservableObject
         {
             StatusMessage = $"Error: {ex.Message}";
             OcrText = string.Empty;
+            HasResult = false;
         }
         finally
         {
             IsProcessing = false;
         }
     }
-
-    private bool CanRunOcr() => PreviewImage is not null && !IsProcessing;
 
     [RelayCommand]
     private async Task DropImageAsync(string path) => await LoadImageAsync(path);
@@ -92,7 +91,9 @@ public partial class MainViewModel : ObservableObject
     private void CopyText()
     {
         if (!string.IsNullOrWhiteSpace(OcrText))
+        {
             Clipboard.SetText(OcrText);
+        }
     }
 
     [RelayCommand]
@@ -101,6 +102,7 @@ public partial class MainViewModel : ObservableObject
         PreviewImage = null;
         _currentImagePath = null;
         OcrText = string.Empty;
+        HasResult = false;
         StatusMessage = "Ready — open or drop an image to begin.";
     }
 
@@ -108,7 +110,7 @@ public partial class MainViewModel : ObservableObject
     {
         try
         {
-            var image = await Task.Run(() =>
+            BitmapSource image = await Task.Run(() =>
             {
                 var bmp = new BitmapImage();
                 bmp.BeginInit();
@@ -122,6 +124,7 @@ public partial class MainViewModel : ObservableObject
             PreviewImage = image;
             _currentImagePath = path;
             OcrText = string.Empty;
+            HasResult = false;
             StatusMessage = $"Loaded: {Path.GetFileName(path)}";
         }
         catch (Exception ex)

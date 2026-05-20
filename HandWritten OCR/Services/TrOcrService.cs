@@ -42,9 +42,9 @@ public sealed class TrOcrService : IOcrService, IDisposable
         {
             if (_isLoaded) return;
 
-            var encoderPath = Path.Combine(modelFolder, "encoder_model.onnx");
-            var decoderPath = Path.Combine(modelFolder, "decoder_model.onnx");
-            var vocabPath = Path.Combine(modelFolder, "vocab.json");
+            string encoderPath = Path.Combine(modelFolder, "encoder_model.onnx");
+            string decoderPath = Path.Combine(modelFolder, "decoder_model.onnx");
+            string vocabPath = Path.Combine(modelFolder, "vocab.json");
 
             if (!File.Exists(encoderPath) || !File.Exists(decoderPath) || !File.Exists(vocabPath))
                 throw new FileNotFoundException(
@@ -56,13 +56,13 @@ public sealed class TrOcrService : IOcrService, IDisposable
 
             await Task.Run(() =>
             {
-                var options = new SessionOptions();
+                SessionOptions options = new SessionOptions();
                 options.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
                 _encoder = new InferenceSession(encoderPath, options);
                 _decoder = new InferenceSession(decoderPath, options);
             });
 
-            var vocabJson = await File.ReadAllTextAsync(vocabPath);
+            string vocabJson = await File.ReadAllTextAsync(vocabPath);
             var tokenToId = JsonSerializer.Deserialize<Dictionary<string, int>>(vocabJson)
                             ?? throw new InvalidDataException("Failed to parse vocab.json");
 
@@ -79,16 +79,18 @@ public sealed class TrOcrService : IOcrService, IDisposable
     public async Task<string> RecognizeAsync(string imagePath, CancellationToken cancellationToken = default)
     {
         if (!_isLoaded)
+        {
             throw new InvalidOperationException("Call LoadModelsAsync before recognizing.");
+        }
 
         return await Task.Run(() => RunInference(imagePath), cancellationToken);
     }
 
     private string RunInference(string imagePath)
     {
-        var pixelValues = PreprocessImage(imagePath);
+        float[] pixelValues = PreprocessImage(imagePath);
 
-        var encoderInputs = new List<NamedOnnxValue>
+        List<NamedOnnxValue> encoderInputs = new List<NamedOnnxValue>
         {
             NamedOnnxValue.CreateFromTensor("pixel_values",
                 new DenseTensor<float>(pixelValues, [1, 3, ImageSize, ImageSize]))
@@ -110,33 +112,32 @@ public sealed class TrOcrService : IOcrService, IDisposable
 
     private List<int> GenerateTokens(float[] hiddenStateData, int[] hiddenStateDims)
     {
-        var inputIds = new List<int> { BosTokenId };
-        var encSeqLen = hiddenStateDims[1];
-        var decoderInputNames = new HashSet<string>(_decoder!.InputMetadata.Keys);
+        List<int> inputIds = new List<int> { BosTokenId };
+        int encSeqLen = hiddenStateDims[1];
+        HashSet<string> decoderInputNames = new HashSet<string>(_decoder!.InputMetadata.Keys);
 
         for (int step = 0; step < MaxNewTokens; step++)
         {
-            var inputIdsLong = inputIds.Select(x => (long)x).ToArray();
+            long[] inputIdsLong = inputIds.Select(x => (long)x).ToArray();
 
-            var inputs = new List<NamedOnnxValue>
+            List<NamedOnnxValue> inputs = new List<NamedOnnxValue>
             {
-                NamedOnnxValue.CreateFromTensor("input_ids",
-                    new DenseTensor<long>(inputIdsLong, [1, inputIds.Count])),
-                NamedOnnxValue.CreateFromTensor("encoder_hidden_states",
-                    new DenseTensor<float>(hiddenStateData, hiddenStateDims))
+                NamedOnnxValue.CreateFromTensor("input_ids", new DenseTensor<long>(inputIdsLong, [1, inputIds.Count])),
+
+                NamedOnnxValue.CreateFromTensor("encoder_hidden_states", new DenseTensor<float>(hiddenStateData, hiddenStateDims))
             };
 
             if (decoderInputNames.Contains("encoder_attention_mask"))
             {
-                var mask = Enumerable.Repeat(1L, encSeqLen).ToArray();
-                inputs.Add(NamedOnnxValue.CreateFromTensor("encoder_attention_mask",
-                    new DenseTensor<long>(mask, [1, encSeqLen])));
+                long[] mask = Enumerable.Repeat(1L, encSeqLen).ToArray();
+
+                inputs.Add(NamedOnnxValue.CreateFromTensor("encoder_attention_mask", new DenseTensor<long>(mask, [1, encSeqLen])));
             }
 
             int nextToken;
             using (var output = _decoder.Run(inputs))
             {
-                var logits = output.First().AsTensor<float>();
+                Tensor<float> logits = output.First().AsTensor<float>();
                 var vocabSize = logits.Dimensions[2];
                 var lastPos = inputIds.Count - 1;
 
@@ -160,19 +161,24 @@ public sealed class TrOcrService : IOcrService, IDisposable
     {
         if (_idToToken is null || _byteEncoder is null) return string.Empty;
 
-        var sb = new StringBuilder();
-        foreach (var id in tokenIds)
+        StringBuilder sb = new StringBuilder();
+        foreach (int id in tokenIds)
         {
             if (!_idToToken.TryGetValue(id, out var token)) continue;
 
-            var bytes = new List<byte>(token.Length);
-            foreach (var ch in token)
+            List<byte> bytes = new List<byte>(token.Length);
+            foreach (char ch in token)
             {
                 if (_byteEncoder.TryGetValue(ch.ToString(), out var b))
+                {
                     bytes.Add((byte)b);
+                }
             }
+
             if (bytes.Count > 0)
+            {
                 sb.Append(Encoding.UTF8.GetString(bytes.ToArray()));
+            }
         }
 
         return sb.ToString().Trim();
@@ -180,24 +186,21 @@ public sealed class TrOcrService : IOcrService, IDisposable
 
     private static float[] PreprocessImage(string imagePath)
     {
-        using var original = new Bitmap(imagePath);
-        using var resized = new Bitmap(ImageSize, ImageSize, PixelFormat.Format24bppRgb);
-        using (var g = Graphics.FromImage(resized))
+        using Bitmap original = new Bitmap(imagePath);
+        using Bitmap resized = new Bitmap(ImageSize, ImageSize, PixelFormat.Format24bppRgb);
+        using (Graphics g = Graphics.FromImage(resized))
         {
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
             g.DrawImage(original, 0, 0, ImageSize, ImageSize);
         }
 
-        var bmpData = resized.LockBits(
-            new Rectangle(0, 0, ImageSize, ImageSize),
-            ImageLockMode.ReadOnly,
-            PixelFormat.Format24bppRgb);
+        BitmapData bmpData = resized.LockBits(new Rectangle(0, 0, ImageSize, ImageSize), ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
 
-        var rawBytes = new byte[bmpData.Stride * ImageSize];
+        byte[] rawBytes = new byte[bmpData.Stride * ImageSize];
         Marshal.Copy(bmpData.Scan0, rawBytes, 0, rawBytes.Length);
         resized.UnlockBits(bmpData);
 
-        var pixels = new float[3 * ImageSize * ImageSize];
+        float[] pixels = new float[3 * ImageSize * ImageSize];
         int stride = bmpData.Stride;
 
         for (int y = 0; y < ImageSize; y++)
@@ -223,12 +226,12 @@ public sealed class TrOcrService : IOcrService, IDisposable
     // GPT-2 byte-level BPE: maps each unicode character in a token back to its original byte value.
     private static Dictionary<string, int> BuildByteEncoder()
     {
-        var bs = new List<int>();
+        List<int> bs = new List<int>();
         for (int i = '!'; i <= '~'; i++) bs.Add(i);
         for (int i = '¡'; i <= '¬'; i++) bs.Add(i);
         for (int i = '®'; i <= 'ÿ'; i++) bs.Add(i);
 
-        var cs = new List<int>(bs);
+        List<int> cs = new List<int>(bs);
         int n = 0;
         for (int b = 0; b < 256; b++)
         {
