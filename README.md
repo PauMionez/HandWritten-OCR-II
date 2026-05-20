@@ -42,14 +42,23 @@ No internet connection, no API calls, no cloud — runs 100% on your machine.
 
 User drops image
 ↓
+
 Image preprocessed → resized 384x384, normalized
+
 ↓
+
 ONNX Encoder (Vision Transformer) reads image → hidden states
+
 ↓
+
 ONNX Decoder loops → generates tokens one by one (autoregressive)
+
 ↓
+
 GPT-2 BPE vocab.json decodes tokens → readable text
+
 ↓
+
 Result displayed in UI
 
 
@@ -64,7 +73,7 @@ Result displayed in UI
 
 ### 1. Clone the repo
 
-2. Download the model files
+### 2. Download the model files
 Download the ONNX model package from
 GitHub Releases
 
@@ -75,17 +84,23 @@ HandWritten OCR/bin/Debug/net8.0-windows/models/
 ├── decoder_model.onnx
 └── vocab.json
 
-
-3. Build and Run
+### 3. Build and Run
 Open the solution in Visual Studio 2022 and press F5
 
-Model Setup (Manual Export)
+---
+
+## Model Setup (Manual Export)
 If you prefer to export the model yourself using Python:
 
-:: Requires Python 3.11
+>Requires Python 3.11
+
+### CMD
 python -m venv D:\trocr_env
+
 D:\trocr_env\Scripts\pip.exe install "optimum[onnxruntime]==1.18.0" "transformers==4.39.3"
+
 D:\trocr_env\Scripts\pip.exe install "torch==2.2.2" --index-url https://download.pytorch.org/whl/cpu
+
 D:\trocr_env\Scripts\pip.exe install onnxscript
 
 D:\trocr_env\Scripts\optimum-cli export onnx ^
@@ -93,5 +108,4 @@ D:\trocr_env\Scripts\optimum-cli export onnx ^
   --task image-to-text ^
   "./models"
 
-Note: "Numpy is not available" warning at the end is safe to ignore.
-The model files are saved regardless.
+> Note: "Numpy is not available" warning at the end is safe to ignore. The model files are saved regardless.
