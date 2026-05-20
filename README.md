@@ -38,6 +38,25 @@ No internet connection, no API calls, no cloud — runs 100% on your machine.
 
 ---
 
+## Model
+
+| | |
+|---|---|
+| **Source** | [microsoft/trocr-large-handwritten](https://huggingface.co/microsoft/trocr-large-handwritten) on Hugging Face |
+| **Architecture** | TrOCR — Vision Transformer (ViT) encoder + autoregressive text decoder |
+| **Original Format** | PyTorch (hosted on Hugging Face Hub) |
+| **Runtime Format** | ONNX (converted using Hugging Face Optimum) |
+
+### Model Files
+
+| File | Role |
+|---|---|
+| `encoder_model.onnx` | Encodes the image into feature representations |
+| `decoder_model.onnx` | Generates text tokens from the encoded features |
+| `vocab.json` | GPT-2 BPE tokenizer vocabulary for decoding tokens to text |
+
+---
+
 ## How It Works
 
 User drops image
