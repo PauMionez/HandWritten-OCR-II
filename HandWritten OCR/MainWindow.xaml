@@ -1,0 +1,156 @@
+<Window x:Class="HandWritten_OCR.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:i="http://schemas.microsoft.com/xaml/behaviors"
+        xmlns:behaviors="clr-namespace:HandWritten_OCR.Behaviors"
+        xmlns:converters="clr-namespace:HandWritten_OCR.Converters"
+        xmlns:vm="clr-namespace:HandWritten_OCR.ViewModels"
+        mc:Ignorable="d"
+        Title="HandWritten OCR"
+        Height="680" Width="1100"
+        MinHeight="480" MinWidth="720"
+        WindowStartupLocation="CenterScreen"
+        Background="#F1F5F9">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Border Grid.Row="0" Background="#0F172A" Padding="20,14">
+            <TextBlock Text="HandWritten OCR"
+                       FontSize="18" FontWeight="SemiBold" Foreground="White"/>
+        </Border>
+
+        <!-- Main panels -->
+        <Grid Grid.Row="1" Margin="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="8"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Image Panel -->
+            <Border Grid.Column="0" Background="White" CornerRadius="8"
+                    BorderBrush="#E2E8F0" BorderThickness="1" ClipToBounds="True">
+                <Grid>
+
+                    <!-- Drop-zone placeholder (shown when no image) -->
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                                Visibility="{Binding PreviewImage, Converter={StaticResource InvNullToVis}}">
+                        <Border Width="60" Height="60" CornerRadius="30"
+                                Background="#F1F5F9" Margin="0,0,0,14">
+                            <TextBlock Text="&#x1F5BC;" FontSize="28"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <TextBlock Text="Drop image here"
+                                   FontSize="15" Foreground="#64748B" HorizontalAlignment="Center"/>
+                        <TextBlock Text="or click Open Image below"
+                                   FontSize="12" Foreground="#94A3B8"
+                                   HorizontalAlignment="Center" Margin="0,4,0,0"/>
+                    </StackPanel>
+
+                    <!-- Image preview -->
+                    <Image Source="{Binding PreviewImage}" Stretch="Uniform" Margin="8"
+                           Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}"/>
+
+                    <!-- Processing overlay -->
+                    <Border Background="#CCFFFFFF" CornerRadius="8"
+                            Visibility="{Binding IsProcessing, Converter={StaticResource BoolToVis}}">
+                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                            <TextBlock Text="Processing..."
+                                       FontSize="16" FontWeight="Medium" Foreground="#334155"
+                                       HorizontalAlignment="Center"/>
+                            <TextBlock Text="{Binding StatusMessage}"
+                                       FontSize="12" Foreground="#64748B"
+                                       HorizontalAlignment="Center" Margin="0,6,0,0"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Drag & drop wired via behavior — no code-behind -->
+                    <i:Interaction.Behaviors>
+                        <behaviors:DragDropBehavior Command="{Binding DropImageCommand}"/>
+                    </i:Interaction.Behaviors>
+
+                </Grid>
+            </Border>
+
+            <!-- Draggable splitter -->
+            <GridSplitter Grid.Column="1" Width="8" HorizontalAlignment="Stretch"
+                          Background="Transparent" Cursor="SizeWE"/>
+
+            <!-- OCR Result Panel -->
+            <Border Grid.Column="2" Background="White" CornerRadius="8"
+                    BorderBrush="#E2E8F0" BorderThickness="1">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Panel header -->
+                    <Border Grid.Row="0" Background="#F8FAFC" CornerRadius="8,8,0,0"
+                            BorderBrush="#E2E8F0" BorderThickness="0,0,0,1" Padding="14,10">
+                        <DockPanel>
+                            <TextBlock Text="Recognized Text"
+                                       FontSize="13" FontWeight="Medium" Foreground="#475569"
+                                       VerticalAlignment="Center" DockPanel.Dock="Left"/>
+                            <Button Content="Copy" DockPanel.Dock="Right"
+                                    HorizontalAlignment="Right"
+                                    Command="{Binding CopyTextCommand}"
+                                    Style="{StaticResource SmallButtonStyle}"
+                                    Visibility="{Binding HasResult, Converter={StaticResource BoolToVis}}"/>
+                        </DockPanel>
+                    </Border>
+
+                    <!-- Empty-state placeholder -->
+                    <TextBlock Grid.Row="1"
+                               Text="OCR results will appear here"
+                               FontSize="14" Foreground="#CBD5E1"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Visibility="{Binding HasResult, Converter={StaticResource InvBoolToVis}}"/>
+
+                    <!-- Result text (read-only, selectable) -->
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                                  Visibility="{Binding HasResult, Converter={StaticResource BoolToVis}}">
+                        <TextBox Text="{Binding OcrText, Mode=OneWay}"
+                                 TextWrapping="Wrap" AcceptsReturn="True"
+                                 IsReadOnly="True" BorderThickness="0"
+                                 FontSize="14" Foreground="#1E293B"
+                                 FontFamily="Consolas" Background="Transparent"
+                                 Padding="14" SelectionBrush="#BFDBFE"/>
+                    </ScrollViewer>
+
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- Toolbar -->
+        <Border Grid.Row="2" Background="White"
+                BorderBrush="#E2E8F0" BorderThickness="0,1,0,0" Padding="12,10">
+            <StackPanel Orientation="Horizontal">
+                <Button Content="Open Image" Margin="0,0,8,0"
+                        Command="{Binding OpenImageCommand}"
+                        Style="{StaticResource PrimaryButtonStyle}"/>
+                <Button Content="Run OCR" Margin="0,0,8,0"
+                        Command="{Binding RunOcrCommand}"
+                        Style="{StaticResource AccentButtonStyle}"/>
+                <Button Content="Clear"
+                        Command="{Binding ClearAllCommand}"
+                        Style="{StaticResource SecondaryButtonStyle}"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Status bar -->
+        <Border Grid.Row="3" Background="#1E293B" Padding="14,6">
+            <TextBlock Text="{Binding StatusMessage}"
+                       Foreground="#94A3B8" FontSize="12"/>
+        </Border>
+
+    </Grid>
+</Window>
