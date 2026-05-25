@@ -7,6 +7,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using System.Windows;
 
 namespace HandWritten_OCR.Services;
 
@@ -22,16 +23,22 @@ public sealed class TrOcrService : IOcrService, IDisposable
     private InferenceSession? _encoder;
     private InferenceSession? _decoder;
     private Dictionary<int, string>? _idToToken;
-    private Dictionary<string, int>? _byteEncoder;
+    private Dictionary<char, byte>? _charToByte;  // keyed by char, avoids per-char ToString()
+    private bool _needsEncoderMask;               // precomputed at load time; eliminates per-call HashSet
     private bool _isLoaded;
+    private bool _disposed;
+    private static readonly object _bitmapLock = new();
     private readonly SemaphoreSlim _loadLock = new(1, 1);
 
     private const int ImageSize = 384;
-    private const float PixelMean = 0.5f;
-    private const float PixelStd = 0.5f;
     private const int BosTokenId = 0;
     private const int EosTokenId = 2;
     private const int MaxNewTokens = 128;
+
+    // LUT: (b / 255f - 0.5f) / 0.5f  =  b / 127.5f - 1.0f
+    // Replaces ~442K FP divisions per image with 256-entry table lookups.
+    private static readonly float[] s_normalizedLut =
+        Enumerable.Range(0, 256).Select(b => b / 127.5f - 1.0f).ToArray();
 
     public bool IsModelLoaded => _isLoaded;
 
@@ -44,7 +51,7 @@ public sealed class TrOcrService : IOcrService, IDisposable
 
             string encoderPath = Path.Combine(modelFolder, "encoder_model.onnx");
             string decoderPath = Path.Combine(modelFolder, "decoder_model.onnx");
-            string vocabPath = Path.Combine(modelFolder, "vocab.json");
+            string vocabPath   = Path.Combine(modelFolder, "vocab.json");
 
             if (!File.Exists(encoderPath) || !File.Exists(decoderPath) || !File.Exists(vocabPath))
                 throw new FileNotFoundException(
@@ -56,8 +63,11 @@ public sealed class TrOcrService : IOcrService, IDisposable
 
             await Task.Run(() =>
             {
-                SessionOptions options = new SessionOptions();
+                var options = new SessionOptions();
                 options.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
+                options.IntraOpNumThreads = Environment.ProcessorCount;
+                options.EnableMemoryPattern = true;
+                options.ExecutionMode = ExecutionMode.ORT_SEQUENTIAL;
                 _encoder = new InferenceSession(encoderPath, options);
                 _decoder = new InferenceSession(decoderPath, options);
             });
@@ -67,7 +77,8 @@ public sealed class TrOcrService : IOcrService, IDisposable
                             ?? throw new InvalidDataException("Failed to parse vocab.json");
 
             _idToToken = tokenToId.ToDictionary(kv => kv.Value, kv => kv.Key);
-            _byteEncoder = BuildByteEncoder();
+            _charToByte = BuildCharToByte();
+            _needsEncoderMask = _decoder!.InputMetadata.ContainsKey("encoder_attention_mask");
             _isLoaded = true;
         }
         finally
@@ -76,155 +87,245 @@ public sealed class TrOcrService : IOcrService, IDisposable
         }
     }
 
-    public async Task<string> RecognizeAsync(string imagePath, CancellationToken cancellationToken = default)
+    public async Task<string> RecognizeAsync(string imagePath,
+        CancellationToken cancellationToken = default)
     {
         if (!_isLoaded)
-        {
             throw new InvalidOperationException("Call LoadModelsAsync before recognizing.");
-        }
 
-        return await Task.Run(() => RunInference(imagePath), cancellationToken);
+        return await Task.Run(() =>
+        {
+            float[] pixels = PreprocessFromPath(imagePath);
+            return RunInferenceWithPixels(pixels);
+        }, cancellationToken);
     }
 
-    private string RunInference(string imagePath)
+    public async Task<string> RecognizeRegionAsync(string imagePath, Rect pixelBounds,
+        CancellationToken cancellationToken = default)
     {
-        float[] pixelValues = PreprocessImage(imagePath);
+        if (!_isLoaded)
+            throw new InvalidOperationException("Call LoadModelsAsync before recognizing.");
 
-        List<NamedOnnxValue> encoderInputs = new List<NamedOnnxValue>
+        return await Task.Run(() =>
+        {
+            float[] pixels = PreprocessRegionFromPath(imagePath, pixelBounds);
+            return RunInferenceWithPixels(pixels);
+        }, cancellationToken);
+    }
+
+    /// <summary>
+    /// Loads the image once, preprocesses all regions in parallel, then runs
+    /// inference sequentially to avoid ORT thread oversubscription.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> RecognizeRegionsAsync(
+        string imagePath,
+        IReadOnlyList<Rect> regions,
+        IProgress<int>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (!_isLoaded)
+            throw new InvalidOperationException("Call LoadModelsAsync before recognizing.");
+
+        return await Task.Run(() =>
+        {
+            float[][] pixelArrays;
+            using (Bitmap original = new Bitmap(imagePath))
+            {
+                pixelArrays = new float[regions.Count][];
+                Parallel.For(0, regions.Count, i =>
+                    pixelArrays[i] = PreprocessRegion(original, regions[i]));
+            }
+
+            string[] results = new string[regions.Count];
+            for (int i = 0; i < regions.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                results[i] = RunInferenceWithPixels(pixelArrays[i]);
+                progress?.Report(i);
+            }
+
+            return (IReadOnlyList<string>)results;
+        }, cancellationToken);
+    }
+
+    // ── Inference ─────────────────────────────────────────────────────────────
+
+    private string RunInferenceWithPixels(float[] pixelValues)
+    {
+        var encoderInputs = new[]
         {
             NamedOnnxValue.CreateFromTensor("pixel_values",
                 new DenseTensor<float>(pixelValues, [1, 3, ImageSize, ImageSize]))
         };
 
-        float[] hiddenStateData;
-        int[] hiddenStateDims;
-
+        DenseTensor<float> hiddenStates;
         using (var encoderOutput = _encoder!.Run(encoderInputs))
         {
-            var hiddenState = encoderOutput.First().AsTensor<float>();
-            hiddenStateData = hiddenState.ToArray();
-            hiddenStateDims = hiddenState.Dimensions.ToArray();
+            var raw = encoderOutput.First().AsTensor<float>();
+            hiddenStates = new DenseTensor<float>(raw.ToArray(), raw.Dimensions.ToArray());
         }
 
-        var tokenIds = GenerateTokens(hiddenStateData, hiddenStateDims);
+        int[] tokenIds = GenerateTokens(hiddenStates);
         return DecodeTokens(tokenIds);
     }
 
-    private List<int> GenerateTokens(float[] hiddenStateData, int[] hiddenStateDims)
+    private int[] GenerateTokens(DenseTensor<float> hiddenStates)
     {
-        List<int> inputIds = new List<int> { BosTokenId };
-        int encSeqLen = hiddenStateDims[1];
-        HashSet<string> decoderInputNames = new HashSet<string>(_decoder!.InputMetadata.Keys);
+        int encSeqLen = hiddenStates.Dimensions[1];
+
+        // Pre-allocated token buffer avoids per-step List growth and LINQ int→long conversion.
+        long[] tokenBuf = new long[MaxNewTokens + 1];
+        tokenBuf[0] = BosTokenId;
+        int tokenCount = 1;
+
+        // Attention mask is constant across all decoder steps — allocate once.
+        DenseTensor<long>? maskTensor = null;
+        if (_needsEncoderMask)
+        {
+            long[] maskData = new long[encSeqLen];
+            Array.Fill(maskData, 1L);
+            maskTensor = new DenseTensor<long>(maskData, [1, encSeqLen]);
+        }
 
         for (int step = 0; step < MaxNewTokens; step++)
         {
-            long[] inputIdsLong = inputIds.Select(x => (long)x).ToArray();
+            // Wrap current token slice without copying — ORT reads synchronously, so this is safe.
+            var inputIdsMem = new Memory<long>(tokenBuf, 0, tokenCount);
+            var inputIdsTensor = new DenseTensor<long>(inputIdsMem, [1, tokenCount]);
 
-            List<NamedOnnxValue> inputs = new List<NamedOnnxValue>
+            var inputs = new List<NamedOnnxValue>(3)
             {
-                NamedOnnxValue.CreateFromTensor("input_ids", new DenseTensor<long>(inputIdsLong, [1, inputIds.Count])),
-
-                NamedOnnxValue.CreateFromTensor("encoder_hidden_states", new DenseTensor<float>(hiddenStateData, hiddenStateDims))
+                NamedOnnxValue.CreateFromTensor("input_ids", inputIdsTensor),
+                NamedOnnxValue.CreateFromTensor("encoder_hidden_states", hiddenStates)
             };
-
-            if (decoderInputNames.Contains("encoder_attention_mask"))
-            {
-                long[] mask = Enumerable.Repeat(1L, encSeqLen).ToArray();
-
-                inputs.Add(NamedOnnxValue.CreateFromTensor("encoder_attention_mask", new DenseTensor<long>(mask, [1, encSeqLen])));
-            }
+            if (maskTensor is not null)
+                inputs.Add(NamedOnnxValue.CreateFromTensor("encoder_attention_mask", maskTensor));
 
             int nextToken;
-            using (var output = _decoder.Run(inputs))
+            using (var output = _decoder!.Run(inputs))
             {
-                Tensor<float> logits = output.First().AsTensor<float>();
-                var vocabSize = logits.Dimensions[2];
-                var lastPos = inputIds.Count - 1;
+                // ORT always returns DenseTensor for float outputs.
+                var logitsDense = (DenseTensor<float>)output.First().AsTensor<float>();
+                int vocabSize = logitsDense.Dimensions[2];
+
+                // Flat-span argmax: avoids per-element 3-D indexer overhead.
+                // Layout: [1, seqLen, vocabSize] row-major → last token at (tokenCount-1)*vocabSize.
+                ReadOnlySpan<float> logitSpan =
+                    logitsDense.Buffer.Span.Slice((tokenCount - 1) * vocabSize, vocabSize);
 
                 nextToken = 0;
                 float maxLogit = float.NegativeInfinity;
-                for (int v = 0; v < vocabSize; v++)
+                for (int v = 0; v < logitSpan.Length; v++)
                 {
-                    var l = logits[0, lastPos, v];
-                    if (l > maxLogit) { maxLogit = l; nextToken = v; }
+                    if (logitSpan[v] > maxLogit) { maxLogit = logitSpan[v]; nextToken = v; }
                 }
             }
 
             if (nextToken == EosTokenId) break;
-            inputIds.Add(nextToken);
+            if (tokenCount >= tokenBuf.Length) break;
+            tokenBuf[tokenCount++] = nextToken;
         }
 
-        return inputIds.Count > 1 ? inputIds.GetRange(1, inputIds.Count - 1) : [];
+        int[] result = new int[tokenCount - 1];
+        for (int i = 1; i < tokenCount; i++)
+            result[i - 1] = (int)tokenBuf[i];
+        return result;
     }
 
-    private string DecodeTokens(List<int> tokenIds)
+    private string DecodeTokens(int[] tokenIds)
     {
-        if (_idToToken is null || _byteEncoder is null) return string.Empty;
+        if (_idToToken is null || _charToByte is null) return string.Empty;
 
-        StringBuilder sb = new StringBuilder();
+        var byteList = new List<byte>(tokenIds.Length * 4);
         foreach (int id in tokenIds)
         {
             if (!_idToToken.TryGetValue(id, out var token)) continue;
-
-            List<byte> bytes = new List<byte>(token.Length);
             foreach (char ch in token)
             {
-                if (_byteEncoder.TryGetValue(ch.ToString(), out var b))
-                {
-                    bytes.Add((byte)b);
-                }
-            }
-
-            if (bytes.Count > 0)
-            {
-                sb.Append(Encoding.UTF8.GetString(bytes.ToArray()));
+                if (_charToByte.TryGetValue(ch, out byte b))
+                    byteList.Add(b);
             }
         }
 
-        return sb.ToString().Trim();
+        if (byteList.Count == 0) return string.Empty;
+        // CollectionsMarshal.AsSpan avoids a List<byte>.ToArray() copy before UTF-8 decode.
+        return Encoding.UTF8.GetString(CollectionsMarshal.AsSpan(byteList)).Trim();
     }
 
-    private static float[] PreprocessImage(string imagePath)
+    // ── Preprocessing ─────────────────────────────────────────────────────────
+
+    private static float[] PreprocessFromPath(string imagePath)
+    {
+        using Bitmap bmp = new Bitmap(imagePath);
+        return PreprocessBitmap(bmp);
+    }
+
+    private static float[] PreprocessRegionFromPath(string imagePath, Rect bounds)
     {
         using Bitmap original = new Bitmap(imagePath);
+        return PreprocessRegion(original, bounds);
+    }
+
+    // Shared by both single-region and batch paths; caller owns the lifetime of `original`.
+    private static float[] PreprocessRegion(Bitmap original, Rect bounds)
+    {
+        int x = Math.Max(0, (int)Math.Round(bounds.X));
+        int y = Math.Max(0, (int)Math.Round(bounds.Y));
+        int w = Math.Max(1, Math.Min((int)Math.Round(bounds.Width),  original.Width  - x));
+        int h = Math.Max(1, Math.Min((int)Math.Round(bounds.Height), original.Height - y));
+
+        // GDI+ Bitmap is not thread-safe: Clone() must not run concurrently on the same instance.
+        Bitmap cropped;
+        lock (_bitmapLock)
+            cropped = original.Clone(new Rectangle(x, y, w, h), original.PixelFormat);
+
+        using (cropped)
+            return PreprocessBitmap(cropped);
+    }
+
+    private static float[] PreprocessBitmap(Bitmap source)
+    {
         using Bitmap resized = new Bitmap(ImageSize, ImageSize, PixelFormat.Format24bppRgb);
         using (Graphics g = Graphics.FromImage(resized))
         {
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-            g.DrawImage(original, 0, 0, ImageSize, ImageSize);
+            g.DrawImage(source, 0, 0, ImageSize, ImageSize);
         }
 
-        BitmapData bmpData = resized.LockBits(new Rectangle(0, 0, ImageSize, ImageSize), ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
+        BitmapData bmpData = resized.LockBits(
+            new Rectangle(0, 0, ImageSize, ImageSize),
+            ImageLockMode.ReadOnly,
+            PixelFormat.Format24bppRgb);
 
         byte[] rawBytes = new byte[bmpData.Stride * ImageSize];
         Marshal.Copy(bmpData.Scan0, rawBytes, 0, rawBytes.Length);
         resized.UnlockBits(bmpData);
 
         float[] pixels = new float[3 * ImageSize * ImageSize];
-        int stride = bmpData.Stride;
+        int stride    = bmpData.Stride;
+        int planeSize = ImageSize * ImageSize;
 
-        for (int y = 0; y < ImageSize; y++)
+        // Parallel over rows; each row writes to non-overlapping slices of `pixels`.
+        Parallel.For(0, ImageSize, py =>
         {
-            for (int x = 0; x < ImageSize; x++)
+            int rowBase = py * stride;
+            int pixBase = py * ImageSize;
+            for (int px = 0; px < ImageSize; px++)
             {
-                int bmpIdx = y * stride + x * 3;
-                // Bitmap stores BGR; TrOCR expects RGB
-                float b = rawBytes[bmpIdx] / 255f;
-                float gv = rawBytes[bmpIdx + 1] / 255f;
-                float r = rawBytes[bmpIdx + 2] / 255f;
-
-                int pixIdx = y * ImageSize + x;
-                pixels[0 * ImageSize * ImageSize + pixIdx] = (r - PixelMean) / PixelStd;
-                pixels[1 * ImageSize * ImageSize + pixIdx] = (gv - PixelMean) / PixelStd;
-                pixels[2 * ImageSize * ImageSize + pixIdx] = (b - PixelMean) / PixelStd;
+                int bmpIdx = rowBase + px * 3;
+                int pixIdx = pixBase + px;
+                // GDI stores BGR; TrOCR expects RGB — channels are swapped here.
+                pixels[pixIdx]                 = s_normalizedLut[rawBytes[bmpIdx + 2]]; // R
+                pixels[planeSize + pixIdx]     = s_normalizedLut[rawBytes[bmpIdx + 1]]; // G
+                pixels[2 * planeSize + pixIdx] = s_normalizedLut[rawBytes[bmpIdx]];     // B
             }
-        }
+        });
 
         return pixels;
     }
 
-    // GPT-2 byte-level BPE: maps each unicode character in a token back to its original byte value.
-    private static Dictionary<string, int> BuildByteEncoder()
+    // GPT-2 byte-level BPE: builds char→byte lookup so decode avoids per-char ToString().
+    private static Dictionary<char, byte> BuildCharToByte()
     {
         List<int> bs = new List<int>();
         for (int i = '!'; i <= '~'; i++) bs.Add(i);
@@ -242,15 +343,17 @@ public sealed class TrOcrService : IOcrService, IDisposable
             }
         }
 
-        var result = new Dictionary<string, int>(bs.Count);
+        var result = new Dictionary<char, byte>(bs.Count);
         for (int i = 0; i < bs.Count; i++)
-            result[char.ConvertFromUtf32(cs[i])] = bs[i];
+            result[(char)cs[i]] = (byte)bs[i];
 
         return result;
     }
 
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
         _encoder?.Dispose();
         _decoder?.Dispose();
         _loadLock.Dispose();
