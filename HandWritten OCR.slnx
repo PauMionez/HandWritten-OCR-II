@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="HandWritten OCR/HandWritten OCR.csproj" />
+  <Project Path="HandWritten OCR.Tests/HandWritten OCR.Tests.csproj" />
 </Solution>

@@ -33,23 +33,25 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        
         <Grid Grid.Row="0" Margin="12,8,12,4">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="8"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-           
+
+            <!-- ── Image panel ──────────────────────────────────────────── -->
             <hc:Card Grid.Column="0" Padding="0">
                 <Grid>
 
+                    <!-- Drop hint (shown when no image is loaded) -->
                     <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
                                 Visibility="{Binding PreviewImage, Converter={StaticResource InvNullToVis}}">
                         <Border Width="60" Height="60" CornerRadius="30"
                                 Background="{DynamicResource SecondaryRegionBrush}"
                                 Margin="0,0,0,14">
-                            <TextBlock Text="&#x1F5BC;" FontSize="28" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <TextBlock Text="&#x1F5BC;" FontSize="28"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <TextBlock Text="Drop image here"
                                    FontSize="15"
@@ -61,16 +63,63 @@
                                    HorizontalAlignment="Center" Margin="0,4,0,0"/>
                     </StackPanel>
 
+                    <!-- Preview image -->
                     <Image Source="{Binding PreviewImage}" Stretch="Uniform" Margin="8"
                            Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}"/>
 
+                    <!-- Region display layer — renders saved boxes; never eats mouse events -->
+                    <ItemsControl ItemsSource="{Binding RegionBoxes}"
+                                  Margin="8"
+                                  IsHitTestVisible="False"
+                                  Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <Canvas/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemContainerStyle>
+                            <Style TargetType="ContentPresenter">
+                                <Setter Property="Canvas.Left" Value="{Binding CanvasBounds.X}"/>
+                                <Setter Property="Canvas.Top"  Value="{Binding CanvasBounds.Y}"/>
+                            </Style>
+                        </ItemsControl.ItemContainerStyle>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid>
+                                    <Border Width="{Binding CanvasBounds.Width}"
+                                            Height="{Binding CanvasBounds.Height}"
+                                            BorderBrush="#4080FF" BorderThickness="2"
+                                            Background="#204080FF"/>
+                                    <TextBlock Text="{Binding Id, StringFormat='#{0}'}"
+                                               Foreground="White" FontWeight="Bold" FontSize="11"
+                                               Margin="4,2" VerticalAlignment="Top" HorizontalAlignment="Left"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- Drawing canvas — captures mouse only when region mode is active -->
+                    <Canvas Margin="8"
+                            Background="Transparent"
+                            Cursor="Cross"
+                            IsHitTestVisible="{Binding IsRegionMode}"
+                            Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}">
+                        <i:Interaction.Behaviors>
+                            <behaviors:RegionSelectionBehavior
+                                AddRegionCommand="{Binding AddRegionCommand}"
+                                RegionBoxes="{Binding RegionBoxes}"
+                                ImageSource="{Binding PreviewImage}"
+                                IsActive="{Binding IsRegionMode}"/>
+                        </i:Interaction.Behaviors>
+                    </Canvas>
+
+                    <!-- Processing overlay -->
                     <Border Background="{DynamicResource BackgroundBrush}"
                             Opacity="0.85" CornerRadius="4"
                             Visibility="{Binding IsProcessing, Converter={StaticResource BoolToVis}}">
                         <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                            
-                            <hc:LoadingCircle IsRunning="{Binding IsProcessing}" Width="40" Height="40" Margin="0,0,0,12"/>
-                            
+                            <hc:LoadingCircle IsRunning="{Binding IsProcessing}"
+                                             Width="40" Height="40" Margin="0,0,0,12"/>
                             <TextBlock Text="Processing..."
                                        FontSize="15" FontWeight="Medium"
                                        Foreground="{DynamicResource SecondaryTextBrush}"
@@ -89,8 +138,10 @@
                 </Grid>
             </hc:Card>
 
-            <GridSplitter Grid.Column="1" Width="8" HorizontalAlignment="Stretch" Background="Transparent" Cursor="SizeWE"/>
+            <GridSplitter Grid.Column="1" Width="8" HorizontalAlignment="Stretch"
+                          Background="Transparent" Cursor="SizeWE"/>
 
+            <!-- ── Results panel ────────────────────────────────────────── -->
             <hc:Card Grid.Column="2" Padding="0">
                 <Grid>
                     <Grid.RowDefinitions>
@@ -125,7 +176,8 @@
 
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
                                   Visibility="{Binding HasResult, Converter={StaticResource BoolToVis}}">
-                        <TextBox Text="{Binding OcrText, Mode=OneWay}" VerticalAlignment="Top"
+                        <TextBox Text="{Binding OcrText, Mode=OneWay}"
+                                 VerticalAlignment="Top"
                                  TextWrapping="Wrap" AcceptsReturn="True"
                                  IsReadOnly="True" BorderThickness="0"
                                  FontSize="14"
@@ -139,11 +191,25 @@
             </hc:Card>
         </Grid>
 
+        <!-- ── Toolbar ──────────────────────────────────────────────────── -->
         <hc:Card Grid.Row="1" Margin="12,4,12,4" Padding="8">
             <StackPanel Orientation="Horizontal">
                 <Button Content="Open Image" Margin="0,0,8,0"
                         Command="{Binding OpenImageCommand}"
                         Style="{StaticResource ButtonPrimary}"/>
+
+                <!-- Toggle: "Draw Regions" / "Stop Drawing" — only when image loaded -->
+                <Button Content="{Binding RegionModeLabel}"
+                        Margin="0,0,8,0"
+                        Command="{Binding ToggleRegionModeCommand}"
+                        Style="{StaticResource ButtonInfo}"
+                        Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}"/>
+
+                <!-- Clear Regions — only when boxes exist -->
+                <Button Content="Clear Regions" Margin="0,0,8,0"
+                        Command="{Binding ClearBoxesCommand}"
+                        Visibility="{Binding HasRegionBoxes, Converter={StaticResource BoolToVis}}"/>
+
                 <Button Content="Run OCR" Margin="0,0,8,0"
                         Command="{Binding RunOcrCommand}"
                         Style="{StaticResource ButtonSuccess}"/>
@@ -152,6 +218,7 @@
             </StackPanel>
         </hc:Card>
 
+        <!-- ── Status bar ────────────────────────────────────────────────── -->
         <Border Grid.Row="2"
                 Background="{DynamicResource SecondaryRegionBrush}"
                 BorderBrush="{DynamicResource BorderRegionBrush}"
