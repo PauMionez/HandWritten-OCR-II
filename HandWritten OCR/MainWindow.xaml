@@ -64,54 +64,57 @@
                     </StackPanel>
 
                     <!-- Preview image -->
-                    <Image Source="{Binding PreviewImage}" Stretch="Uniform" Margin="8"
-                           Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}"/>
+                    <!-- Preview image -->
+                    <behaviors:PanAndZoomControl ClipToBounds="True" Rotation="{Binding ImageRotation}">
 
-                    <!-- Region display layer — renders saved boxes; never eats mouse events -->
-                    <ItemsControl ItemsSource="{Binding RegionBoxes}"
-                                  Margin="8"
-                                  IsHitTestVisible="False"
-                                  Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <Canvas/>
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemContainerStyle>
-                            <Style TargetType="ContentPresenter">
-                                <Setter Property="Canvas.Left" Value="{Binding CanvasBounds.X}"/>
-                                <Setter Property="Canvas.Top"  Value="{Binding CanvasBounds.Y}"/>
-                            </Style>
-                        </ItemsControl.ItemContainerStyle>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Grid>
-                                    <Border Width="{Binding CanvasBounds.Width}"
-                                            Height="{Binding CanvasBounds.Height}"
-                                            BorderBrush="#4080FF" BorderThickness="2"
-                                            Background="#204080FF"/>
-                                    <TextBlock Text="{Binding Id, StringFormat='#{0}'}"
-                                               Foreground="White" FontWeight="Bold" FontSize="11"
-                                               Margin="4,2" VerticalAlignment="Top" HorizontalAlignment="Left"/>
-                                </Grid>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
+                        <Grid>
+                            <Image Source="{Binding PreviewImage}" VirtualizingPanel.IsVirtualizing="True"  Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}"/>
 
-                    <!-- Drawing canvas — captures mouse only when region mode is active -->
-                    <Canvas Margin="8"
-                            Background="Transparent"
-                            Cursor="Cross"
-                            IsHitTestVisible="{Binding IsRegionMode}"
-                            Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}">
-                        <i:Interaction.Behaviors>
-                            <behaviors:RegionSelectionBehavior
-                                AddRegionCommand="{Binding AddRegionCommand}"
-                                RegionBoxes="{Binding RegionBoxes}"
-                                ImageSource="{Binding PreviewImage}"
-                                IsActive="{Binding IsRegionMode}"/>
-                        </i:Interaction.Behaviors>
-                    </Canvas>
+                            <!-- Region display layer — renders saved boxes; never eats mouse events -->
+                            <ItemsControl ItemsSource="{Binding RegionBoxes}"
+                                          IsHitTestVisible="False"
+                                          Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <Canvas/>
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemContainerStyle>
+                                    <Style TargetType="ContentPresenter">
+                                        <Setter Property="Canvas.Left" Value="{Binding CanvasBounds.X}"/>
+                                        <Setter Property="Canvas.Top"  Value="{Binding CanvasBounds.Y}"/>
+                                    </Style>
+                                </ItemsControl.ItemContainerStyle>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Border Width="{Binding CanvasBounds.Width}"
+                                Height="{Binding CanvasBounds.Height}"
+                                BorderBrush="#4080FF" BorderThickness="2"
+                                Background="#204080FF"/>
+                                            <TextBlock Text="{Binding Id, StringFormat='#{0}'}"
+                                   Foreground="White" FontWeight="Bold" FontSize="11"
+                                   Margin="4,2" VerticalAlignment="Top" HorizontalAlignment="Left"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <!-- Drawing canvas — captures mouse only when region mode is active -->
+                            <Canvas Background="Transparent"
+                                    Cursor="Cross"
+                                    IsHitTestVisible="{Binding IsRegionMode}"
+                                    Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}">
+                                <i:Interaction.Behaviors>
+                                    <behaviors:RegionSelectionBehavior
+                                            AddRegionCommand="{Binding AddRegionCommand}"
+                                            RegionBoxes="{Binding RegionBoxes}"
+                                            ImageSource="{Binding PreviewImage}"
+                                            IsActive="{Binding IsRegionMode}"/>
+                                </i:Interaction.Behaviors>
+                            </Canvas>
+                        </Grid>
+                    </behaviors:PanAndZoomControl>
 
                     <!-- Processing overlay -->
                     <Border Background="{DynamicResource BackgroundBrush}"
@@ -215,6 +218,11 @@
                         Style="{StaticResource ButtonSuccess}"/>
                 <Button Content="Clear"
                         Command="{Binding ClearAllCommand}"/>
+
+                <Button Content="↺" Command="{Binding RotateLeftCommand}"
+                        Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}"/>
+                <Button Content="↻" Command="{Binding RotateRightCommand}"
+                        Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}"/>
             </StackPanel>
         </hc:Card>
 

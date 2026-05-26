@@ -16,23 +16,14 @@ public partial class MainViewModel : ViewBaseModel
     private readonly string _modelFolder;
     private string? _currentImagePath;
 
-    [ObservableProperty]
-    private BitmapSource? _previewImage;
+    [ObservableProperty]private BitmapSource? _previewImage;
+    [ObservableProperty]private string _ocrText = string.Empty;
+    [ObservableProperty]private bool _hasResult;
+    [ObservableProperty]private bool _isProcessing;
 
-    [ObservableProperty]
-    private string _ocrText = string.Empty;
-
-    [ObservableProperty]
-    private bool _hasResult;
-
-    [ObservableProperty]
-    private bool _isProcessing;
-
-    [ObservableProperty]
-    private string _statusMessage = "Ready — open or drop an image to begin.";
-
-    [ObservableProperty]
-    private bool _isRegionMode;
+    [ObservableProperty]private string _statusMessage = "Ready — open or drop an image to begin.";
+    [ObservableProperty]private bool _isRegionMode;
+    [ObservableProperty]private double _imageRotation = 0;
 
     public ObservableCollection<RegionBox> RegionBoxes { get; } = new();
 
@@ -133,6 +124,12 @@ public partial class MainViewModel : ViewBaseModel
     private async Task DropImageAsync(string path) => await LoadImageAsync(path);
 
     [RelayCommand]
+    private void RotateLeft() => ImageRotation -= 90;
+
+    [RelayCommand]
+    private void RotateRight() => ImageRotation += 90;
+
+    [RelayCommand]
     private void CopyText()
     {
         if (RegionBoxes.Count > 0)
@@ -157,6 +154,7 @@ public partial class MainViewModel : ViewBaseModel
         OcrText = string.Empty;
         HasResult = false;
         IsRegionMode = false;
+        ImageRotation = 0;
         RegionBoxes.Clear();
         StatusMessage = "Ready — open or drop an image to begin.";
     }
