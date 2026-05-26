@@ -29,6 +29,11 @@ public sealed class TrOcrService : IOcrService, IDisposable
     private bool _disposed;
     private static readonly object _bitmapLock = new();
     private readonly SemaphoreSlim _loadLock = new(1, 1);
+    private InferenceSession? _decoderWithPast;
+    private bool _hasKvCache;
+    private string[]? _presentOutputNames;
+    private bool _decoderWithPastNeedsEncoderHiddenStates;
+    private bool _decoderWithPastNeedsMask;
 
     private const int ImageSize = 384;
     private const int BosTokenId = 0;
@@ -49,9 +54,10 @@ public sealed class TrOcrService : IOcrService, IDisposable
         {
             if (_isLoaded) return;
 
-            string encoderPath = Path.Combine(modelFolder, "encoder_model.onnx");
-            string decoderPath = Path.Combine(modelFolder, "decoder_model.onnx");
-            string vocabPath   = Path.Combine(modelFolder, "vocab.json");
+            string encoderPath         = Path.Combine(modelFolder, "encoder_model.onnx");
+            string decoderPath         = Path.Combine(modelFolder, "decoder_model.onnx");
+            string vocabPath           = Path.Combine(modelFolder, "vocab.json");
+            string decoderWithPastPath = Path.Combine(modelFolder, "decoder_with_past_model.onnx");
 
             if (!File.Exists(encoderPath) || !File.Exists(decoderPath) || !File.Exists(vocabPath))
                 throw new FileNotFoundException(
@@ -70,6 +76,8 @@ public sealed class TrOcrService : IOcrService, IDisposable
                 options.ExecutionMode = ExecutionMode.ORT_SEQUENTIAL;
                 _encoder = new InferenceSession(encoderPath, options);
                 _decoder = new InferenceSession(decoderPath, options);
+                if (File.Exists(decoderWithPastPath))
+                    _decoderWithPast = new InferenceSession(decoderWithPastPath, options);
             });
 
             string vocabJson = await File.ReadAllTextAsync(vocabPath);
@@ -79,6 +87,21 @@ public sealed class TrOcrService : IOcrService, IDisposable
             _idToToken = tokenToId.ToDictionary(kv => kv.Value, kv => kv.Key);
             _charToByte = BuildCharToByte();
             _needsEncoderMask = _decoder!.InputMetadata.ContainsKey("encoder_attention_mask");
+            if (_decoderWithPast is not null)
+            {
+                _presentOutputNames = _decoder.OutputMetadata.Keys
+                    .Where(k => k.StartsWith("present", StringComparison.Ordinal))
+                    .OrderBy(k => k, StringComparer.Ordinal)
+                    .ToArray();
+                _hasKvCache = _presentOutputNames.Length > 0;
+                if (_hasKvCache)
+                {
+                    _decoderWithPastNeedsEncoderHiddenStates =
+                        _decoderWithPast.InputMetadata.ContainsKey("encoder_hidden_states");
+                    _decoderWithPastNeedsMask =
+                        _decoderWithPast.InputMetadata.ContainsKey("encoder_attention_mask");
+                }
+            }
             _isLoaded = true;
         }
         finally
@@ -169,7 +192,110 @@ public sealed class TrOcrService : IOcrService, IDisposable
         return DecodeTokens(tokenIds);
     }
 
-    private int[] GenerateTokens(DenseTensor<float> hiddenStates)
+    private int[] GenerateTokens(DenseTensor<float> hiddenStates) =>
+        _hasKvCache ? GenerateTokensKvCached(hiddenStates) : GenerateTokensBaseline(hiddenStates);
+
+    private int[] GenerateTokensKvCached(DenseTensor<float> hiddenStates)
+    {
+        int encSeqLen = hiddenStates.Dimensions[1];
+
+        long[] tokenBuf = new long[MaxNewTokens + 1];
+        tokenBuf[0] = BosTokenId;
+        int tokenCount = 1;
+
+        DenseTensor<long>? maskTensor = null;
+        if (_needsEncoderMask)
+        {
+            long[] maskData = new long[encSeqLen];
+            Array.Fill(maskData, 1L);
+            maskTensor = new DenseTensor<long>(maskData, [1, encSeqLen]);
+        }
+
+        IDisposableReadOnlyCollection<DisposableNamedOnnxValue>? prevOutput = null;
+        try
+        {
+            for (int step = 0; step < MaxNewTokens; step++)
+            {
+                // Wrap the single token to pass — no allocation beyond the existing tokenBuf.
+                var inputIdsMem = new Memory<long>(tokenBuf, tokenCount - 1, 1);
+                var inputIdsTensor = new DenseTensor<long>(inputIdsMem, [1, 1]);
+
+                IDisposableReadOnlyCollection<DisposableNamedOnnxValue> currentOutput;
+
+                if (step == 0)
+                {
+                    // First step: use the standard decoder; it outputs present.* KV that seeds the cache.
+                    var inputs = new List<NamedOnnxValue>(3)
+                    {
+                        NamedOnnxValue.CreateFromTensor("input_ids", inputIdsTensor),
+                        NamedOnnxValue.CreateFromTensor("encoder_hidden_states", hiddenStates)
+                    };
+                    if (maskTensor is not null)
+                        inputs.Add(NamedOnnxValue.CreateFromTensor("encoder_attention_mask", maskTensor));
+                    currentOutput = _decoder!.Run(inputs);
+                }
+                else
+                {
+                    // Subsequent steps: pass only the last token + cached KV — O(1) per step.
+                    int capacity = 1
+                        + (_decoderWithPastNeedsEncoderHiddenStates ? 1 : 0)
+                        + (_decoderWithPastNeedsMask && maskTensor is not null ? 1 : 0)
+                        + _presentOutputNames!.Length;
+                    var inputs = new List<NamedOnnxValue>(capacity)
+                    {
+                        NamedOnnxValue.CreateFromTensor("input_ids", inputIdsTensor)
+                    };
+                    if (_decoderWithPastNeedsEncoderHiddenStates)
+                        inputs.Add(NamedOnnxValue.CreateFromTensor("encoder_hidden_states", hiddenStates));
+                    if (_decoderWithPastNeedsMask && maskTensor is not null)
+                        inputs.Add(NamedOnnxValue.CreateFromTensor("encoder_attention_mask", maskTensor));
+
+                    // Map present.X → past_key_values.X for each cached layer tensor.
+                    foreach (string presentName in _presentOutputNames!)
+                    {
+                        string pastName = "past_key_values" + presentName["present".Length..];
+                        var tensor = prevOutput!.First(o => o.Name == presentName).AsTensor<float>();
+                        inputs.Add(NamedOnnxValue.CreateFromTensor(pastName, tensor));
+                    }
+
+                    currentOutput = _decoderWithPast!.Run(inputs);
+                    // Run() is synchronous — all input tensors have been consumed; safe to free.
+                    prevOutput!.Dispose();
+                    prevOutput = null;
+                }
+
+                // Logit output is always [1, 1, vocab_size] since we feed exactly one token.
+                var logitsDense = (DenseTensor<float>)currentOutput
+                    .First(o => o.Name == "logits").AsTensor<float>();
+                int vocabSize = logitsDense.Dimensions[2];
+                ReadOnlySpan<float> logitSpan = logitsDense.Buffer.Span.Slice(0, vocabSize);
+
+                int nextToken = 0;
+                float maxLogit = float.NegativeInfinity;
+                for (int v = 0; v < logitSpan.Length; v++)
+                {
+                    if (logitSpan[v] > maxLogit) { maxLogit = logitSpan[v]; nextToken = v; }
+                }
+
+                prevOutput = currentOutput;
+
+                if (nextToken == EosTokenId) break;
+                if (tokenCount >= tokenBuf.Length) break;
+                tokenBuf[tokenCount++] = nextToken;
+            }
+        }
+        finally
+        {
+            prevOutput?.Dispose();
+        }
+
+        int[] result = new int[tokenCount - 1];
+        for (int i = 1; i < tokenCount; i++)
+            result[i - 1] = (int)tokenBuf[i];
+        return result;
+    }
+
+    private int[] GenerateTokensBaseline(DenseTensor<float> hiddenStates)
     {
         int encSeqLen = hiddenStates.Dimensions[1];
 
@@ -356,6 +482,7 @@ public sealed class TrOcrService : IOcrService, IDisposable
         _disposed = true;
         _encoder?.Dispose();
         _decoder?.Dispose();
+        _decoderWithPast?.Dispose();
         _loadLock.Dispose();
     }
 }
