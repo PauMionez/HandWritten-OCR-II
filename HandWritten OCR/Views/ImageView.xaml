@@ -1,0 +1,116 @@
+﻿<UserControl x:Class="HandWritten_OCR.Views.ImageView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+             xmlns:local="clr-namespace:HandWritten_OCR.Views"
+             xmlns:behaviors="clr-namespace:HandWritten_OCR.Behaviors"
+             xmlns:hc="https://handyorg.github.io/handycontrol"
+             xmlns:i="http://schemas.microsoft.com/xaml/behaviors"
+             xmlns:converters="clr-namespace:HandWritten_OCR.Converters"
+             xmlns:vm="clr-namespace:HandWritten_OCR.ViewModels"
+             mc:Ignorable="d" 
+             d:DesignHeight="450" d:DesignWidth="800">
+
+    <UserControl.Resources>
+        <converters:BoolToVisibilityConverter x:Key="BoolToVis"/>
+        <converters:BoolToVisibilityConverter x:Key="InvBoolToVis" IsInverted="True"/>
+        <converters:NullToVisibilityConverter x:Key="NullToVis"/>
+        <converters:NullToVisibilityConverter x:Key="InvNullToVis" IsInverted="True"/>
+    </UserControl.Resources>
+
+    <Grid>
+        <!-- Drop hint (shown when no image is loaded) -->
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Visibility="{Binding PreviewImage, Converter={StaticResource InvNullToVis}}">
+            <Border Width="60" Height="60" CornerRadius="30"
+                    Background="{DynamicResource SecondaryRegionBrush}"
+                    Margin="0,0,0,14">
+                <TextBlock Text="&#x1F5BC;" FontSize="28"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <TextBlock Text="Drop image here"
+                       FontSize="15"
+                       Foreground="{DynamicResource SecondaryTextBrush}"
+                       HorizontalAlignment="Center"/>
+            <TextBlock Text="or click Open Image below"
+                       FontSize="12"
+                       Foreground="{DynamicResource ThirdlyTextBrush}"
+                       HorizontalAlignment="Center" Margin="0,4,0,0"/>
+        </StackPanel>
+
+        <!-- Preview image -->
+        <!-- Preview image -->
+        <behaviors:PanAndZoomControl ClipToBounds="True" Rotation="{Binding ImageRotation}">
+
+            <Grid>
+                <Image Source="{Binding PreviewImage}" VirtualizingPanel.IsVirtualizing="True"  Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}"/>
+
+                <!-- Region display layer — renders saved boxes; never eats mouse events -->
+                <ItemsControl ItemsSource="{Binding RegionBoxes}"
+                              IsHitTestVisible="False"
+                              Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <Canvas/>
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemContainerStyle>
+                        <Style TargetType="ContentPresenter">
+                            <Setter Property="Canvas.Left" Value="{Binding CanvasBounds.X}"/>
+                            <Setter Property="Canvas.Top"  Value="{Binding CanvasBounds.Y}"/>
+                        </Style>
+                    </ItemsControl.ItemContainerStyle>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid>
+                                <Border Width="{Binding CanvasBounds.Width}"
+                                        Height="{Binding CanvasBounds.Height}"
+                                        BorderBrush="#4080FF" BorderThickness="2"
+                                        Background="#204080FF"/>
+                                <TextBlock Text="{Binding Id, StringFormat='#{0}'}"
+                                           Foreground="White" FontWeight="Bold" FontSize="11"
+                                           Margin="4,2" VerticalAlignment="Top" HorizontalAlignment="Left"/>
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <!-- Drawing canvas — captures mouse only when region mode is active -->
+                <Canvas Background="Transparent"
+                        Cursor="Cross"
+                        IsHitTestVisible="{Binding IsRegionMode}"
+                        Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}">
+                    <i:Interaction.Behaviors>
+                        <behaviors:RegionSelectionBehavior
+                                  AddRegionCommand="{Binding AddRegionCommand}"
+                                  RegionBoxes="{Binding RegionBoxes}"
+                                  ImageSource="{Binding PreviewImage}"
+                                  IsActive="{Binding IsRegionMode}"/>
+                    </i:Interaction.Behaviors>
+                </Canvas>
+            </Grid>
+        </behaviors:PanAndZoomControl>
+
+        <!-- Processing overlay -->
+        <Border Background="{DynamicResource BackgroundBrush}"
+          Opacity="0.85" CornerRadius="4"
+          Visibility="{Binding IsProcessing, Converter={StaticResource BoolToVis}}">
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                <hc:LoadingCircle IsRunning="{Binding IsProcessing}"
+                           Width="40" Height="40" Margin="0,0,0,12"/>
+                <TextBlock Text="Processing..."
+                     FontSize="15" FontWeight="Medium"
+                     Foreground="{DynamicResource SecondaryTextBrush}"
+                     HorizontalAlignment="Center"/>
+                <TextBlock Text="{Binding StatusMessage}"
+                     FontSize="12"
+                     Foreground="{DynamicResource SecondaryTextBrush}"
+                     HorizontalAlignment="Center" Margin="0,6,0,0"/>
+            </StackPanel>
+        </Border>
+
+        <i:Interaction.Behaviors>
+            <behaviors:DragDropBehavior Command="{Binding DropImageCommand}"/>
+        </i:Interaction.Behaviors>
+    </Grid>
+</UserControl>

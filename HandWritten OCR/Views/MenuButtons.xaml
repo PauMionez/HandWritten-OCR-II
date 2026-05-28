@@ -1,0 +1,48 @@
+﻿<UserControl x:Class="HandWritten_OCR.Views.MenuButtons"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+             xmlns:converters="clr-namespace:HandWritten_OCR.Converters"
+             xmlns:local="clr-namespace:HandWritten_OCR.Views"
+             mc:Ignorable="d" >
+    
+    <UserControl.Resources>
+        <converters:BoolToVisibilityConverter x:Key="BoolToVis"/>
+        <converters:BoolToVisibilityConverter x:Key="InvBoolToVis" IsInverted="True"/>
+        <converters:NullToVisibilityConverter x:Key="NullToVis"/>
+        <converters:NullToVisibilityConverter x:Key="InvNullToVis" IsInverted="True"/>
+    </UserControl.Resources>
+
+
+    <Grid>
+        <StackPanel Orientation="Horizontal">
+            <Button Content="Open Image" Margin="0,0,8,0"
+             Command="{Binding OpenImageCommand}"
+             Style="{StaticResource ButtonPrimary}"/>
+
+            <!-- Toggle: "Draw Regions" / "Stop Drawing" — only when image loaded -->
+            <Button Content="{Binding RegionModeLabel}"
+             Margin="0,0,8,0"
+             Command="{Binding ToggleRegionModeCommand}"
+             Style="{StaticResource ButtonInfo}"
+             Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}"/>
+
+            <!-- Clear Regions — only when boxes exist -->
+            <Button Content="Clear Regions" Margin="0,0,8,0"
+             Command="{Binding ClearBoxesCommand}"
+             Visibility="{Binding HasRegionBoxes, Converter={StaticResource BoolToVis}}"/>
+
+            <Button Content="Run OCR" Margin="0,0,8,0"
+             Command="{Binding RunOcrCommand}"
+             Style="{StaticResource ButtonSuccess}"/>
+            <Button Content="Clear"
+             Command="{Binding ClearAllCommand}"/>
+
+            <Button Content="↺" Command="{Binding RotateLeftCommand}"
+             Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}"/>
+            <Button Content="↻" Command="{Binding RotateRightCommand}"
+             Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}"/>
+        </StackPanel>
+    </Grid>
+</UserControl>
