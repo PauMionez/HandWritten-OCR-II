@@ -38,23 +38,33 @@
 
         <Grid Grid.Row="0" Margin="12,8,12,4">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="200" MinWidth="140"/>
                 <ColumnDefinition Width="8"/>
                 <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="8"/>
+                <ColumnDefinition Width="200"/>
             </Grid.ColumnDefinitions>
 
-            <!--Image panel-->
+            <!--Image list-->
             <hc:Card Grid.Column="0" Padding="0">
-                <Grid>
-                    <views:ImageView/>
-                </Grid>
+                <views:ImageListView/>
             </hc:Card>
 
             <GridSplitter Grid.Column="1" Width="8" HorizontalAlignment="Stretch"
                           Background="Transparent" Cursor="SizeWE"/>
 
-            <!--Results panel-->
+            <!--Image panel-->
             <hc:Card Grid.Column="2" Padding="0">
+                <Grid>
+                    <views:ImageView/>
+                </Grid>
+            </hc:Card>
+
+            <GridSplitter Grid.Column="3" Width="8" HorizontalAlignment="Stretch"
+                          Background="Transparent" Cursor="SizeWE"/>
+
+            <!--Results panel-->
+            <hc:Card Grid.Column="4" Padding="0">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
