@@ -8,10 +8,11 @@
         xmlns:behaviors="clr-namespace:HandWritten_OCR.Behaviors"
         xmlns:converters="clr-namespace:HandWritten_OCR.Converters"
         xmlns:vm="clr-namespace:HandWritten_OCR.ViewModels"
+           xmlns:views="clr-namespace:HandWritten_OCR.Views"
         mc:Ignorable="d"
         d:DataContext="{d:DesignInstance Type=vm:MainViewModel, IsDesignTimeCreatable=False}"
         Title="{Binding Title}"
-        Height="680" Width="1100"
+        Height="820" Width="1100"
         MinHeight="480" MinWidth="720"
         WindowStartupLocation="CenterScreen">
 
@@ -28,8 +29,10 @@
 
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="*"/>
+            <RowDefinition Height="2*" MinHeight="200"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="8"/>
+            <RowDefinition Height="*" MinHeight="120"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
@@ -40,111 +43,17 @@
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 
-            <!-- ── Image panel ──────────────────────────────────────────── -->
+            <!--Image panel-->
             <hc:Card Grid.Column="0" Padding="0">
                 <Grid>
-
-                    <!-- Drop hint (shown when no image is loaded) -->
-                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
-                                Visibility="{Binding PreviewImage, Converter={StaticResource InvNullToVis}}">
-                        <Border Width="60" Height="60" CornerRadius="30"
-                                Background="{DynamicResource SecondaryRegionBrush}"
-                                Margin="0,0,0,14">
-                            <TextBlock Text="&#x1F5BC;" FontSize="28"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
-                        <TextBlock Text="Drop image here"
-                                   FontSize="15"
-                                   Foreground="{DynamicResource SecondaryTextBrush}"
-                                   HorizontalAlignment="Center"/>
-                        <TextBlock Text="or click Open Image below"
-                                   FontSize="12"
-                                   Foreground="{DynamicResource ThirdlyTextBrush}"
-                                   HorizontalAlignment="Center" Margin="0,4,0,0"/>
-                    </StackPanel>
-
-                    <!-- Preview image -->
-                    <!-- Preview image -->
-                    <behaviors:PanAndZoomControl ClipToBounds="True" Rotation="{Binding ImageRotation}">
-
-                        <Grid>
-                            <Image Source="{Binding PreviewImage}" VirtualizingPanel.IsVirtualizing="True"  Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}"/>
-
-                            <!-- Region display layer — renders saved boxes; never eats mouse events -->
-                            <ItemsControl ItemsSource="{Binding RegionBoxes}"
-                                          IsHitTestVisible="False"
-                                          Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <Canvas/>
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemContainerStyle>
-                                    <Style TargetType="ContentPresenter">
-                                        <Setter Property="Canvas.Left" Value="{Binding CanvasBounds.X}"/>
-                                        <Setter Property="Canvas.Top"  Value="{Binding CanvasBounds.Y}"/>
-                                    </Style>
-                                </ItemsControl.ItemContainerStyle>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid>
-                                            <Border Width="{Binding CanvasBounds.Width}"
-                                Height="{Binding CanvasBounds.Height}"
-                                BorderBrush="#4080FF" BorderThickness="2"
-                                Background="#204080FF"/>
-                                            <TextBlock Text="{Binding Id, StringFormat='#{0}'}"
-                                   Foreground="White" FontWeight="Bold" FontSize="11"
-                                   Margin="4,2" VerticalAlignment="Top" HorizontalAlignment="Left"/>
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-
-                            <!-- Drawing canvas — captures mouse only when region mode is active -->
-                            <Canvas Background="Transparent"
-                                    Cursor="Cross"
-                                    IsHitTestVisible="{Binding IsRegionMode}"
-                                    Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}">
-                                <i:Interaction.Behaviors>
-                                    <behaviors:RegionSelectionBehavior
-                                            AddRegionCommand="{Binding AddRegionCommand}"
-                                            RegionBoxes="{Binding RegionBoxes}"
-                                            ImageSource="{Binding PreviewImage}"
-                                            IsActive="{Binding IsRegionMode}"/>
-                                </i:Interaction.Behaviors>
-                            </Canvas>
-                        </Grid>
-                    </behaviors:PanAndZoomControl>
-
-                    <!-- Processing overlay -->
-                    <Border Background="{DynamicResource BackgroundBrush}"
-                            Opacity="0.85" CornerRadius="4"
-                            Visibility="{Binding IsProcessing, Converter={StaticResource BoolToVis}}">
-                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                            <hc:LoadingCircle IsRunning="{Binding IsProcessing}"
-                                             Width="40" Height="40" Margin="0,0,0,12"/>
-                            <TextBlock Text="Processing..."
-                                       FontSize="15" FontWeight="Medium"
-                                       Foreground="{DynamicResource SecondaryTextBrush}"
-                                       HorizontalAlignment="Center"/>
-                            <TextBlock Text="{Binding StatusMessage}"
-                                       FontSize="12"
-                                       Foreground="{DynamicResource SecondaryTextBrush}"
-                                       HorizontalAlignment="Center" Margin="0,6,0,0"/>
-                        </StackPanel>
-                    </Border>
-
-                    <i:Interaction.Behaviors>
-                        <behaviors:DragDropBehavior Command="{Binding DropImageCommand}"/>
-                    </i:Interaction.Behaviors>
-
+                    <views:ImageView/>
                 </Grid>
             </hc:Card>
 
             <GridSplitter Grid.Column="1" Width="8" HorizontalAlignment="Stretch"
                           Background="Transparent" Cursor="SizeWE"/>
 
-            <!-- ── Results panel ────────────────────────────────────────── -->
+            <!--Results panel-->
             <hc:Card Grid.Column="2" Padding="0">
                 <Grid>
                     <Grid.RowDefinitions>
@@ -194,40 +103,23 @@
             </hc:Card>
         </Grid>
 
-        <!-- ── Toolbar ──────────────────────────────────────────────────── -->
+        <!--Toolbar-->
         <hc:Card Grid.Row="1" Margin="12,4,12,4" Padding="8">
-            <StackPanel Orientation="Horizontal">
-                <Button Content="Open Image" Margin="0,0,8,0"
-                        Command="{Binding OpenImageCommand}"
-                        Style="{StaticResource ButtonPrimary}"/>
-
-                <!-- Toggle: "Draw Regions" / "Stop Drawing" — only when image loaded -->
-                <Button Content="{Binding RegionModeLabel}"
-                        Margin="0,0,8,0"
-                        Command="{Binding ToggleRegionModeCommand}"
-                        Style="{StaticResource ButtonInfo}"
-                        Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}"/>
-
-                <!-- Clear Regions — only when boxes exist -->
-                <Button Content="Clear Regions" Margin="0,0,8,0"
-                        Command="{Binding ClearBoxesCommand}"
-                        Visibility="{Binding HasRegionBoxes, Converter={StaticResource BoolToVis}}"/>
-
-                <Button Content="Run OCR" Margin="0,0,8,0"
-                        Command="{Binding RunOcrCommand}"
-                        Style="{StaticResource ButtonSuccess}"/>
-                <Button Content="Clear"
-                        Command="{Binding ClearAllCommand}"/>
-
-                <Button Content="↺" Command="{Binding RotateLeftCommand}"
-                        Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}"/>
-                <Button Content="↻" Command="{Binding RotateRightCommand}"
-                        Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}"/>
-            </StackPanel>
+            <views:MenuButtons/>
         </hc:Card>
 
-        <!-- ── Status bar ────────────────────────────────────────────────── -->
-        <Border Grid.Row="2"
+        <!--GridSplitter-->
+        <GridSplitter Grid.Row="2" Height="8" HorizontalAlignment="Stretch"
+                      Background="Transparent" Cursor="SizeNS"
+                      ResizeDirection="Rows"/>
+
+        <!--DataGrid panel-->
+        <hc:Card Grid.Row="3" Margin="12,0,12,4" Padding="0">
+            <views:DataGridView/>
+        </hc:Card>
+
+        <!--Status bar-->
+        <Border Grid.Row="4"
                 Background="{DynamicResource SecondaryRegionBrush}"
                 BorderBrush="{DynamicResource BorderRegionBrush}"
                 BorderThickness="0,1,0,0"
