@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using HandWritten_OCR.Abstract;
+using HandWritten_OCR.Helpers;
 using HandWritten_OCR.Models;
 using HandWritten_OCR.Services;
 using Microsoft.WindowsAPICodePack.Dialogs;
@@ -19,7 +20,6 @@ public partial class MainViewModel : ViewBaseModel
     private readonly string _modelFolder;
     private string? _currentImagePath;
 
-    // ── Image list ────────────────────────────────────────────────────────────
     public ObservableCollection<ImageItem> ImageList { get; } = new();
     public bool HasImageList => ImageList.Count > 0;
 
@@ -29,21 +29,24 @@ public partial class MainViewModel : ViewBaseModel
     partial void OnSelectedImageItemChanged(ImageItem? value)
     {
         if (value is null) return;
-        _ = HandleImageSelectionAsync(value);
+
+        LoadImageAsync(value.FullPath);
+
+        ImageListHelper help = new ImageListHelper();
+        _ = help.HandleImageSelectionAsync(value, _gridData, _selectedRowIndex, _selectedCellColumn, ImageList, RequestCellFocus);
     }
 
-    // ── DataGrid state ────────────────────────────────────────────────────────
-    private DataTable? _gridData;
-    private string? _selectedCellColumn;
+    private DataTable _gridData;
+    private string _selectedCellColumn;
     private int _selectedRowIndex = -1;
 
     public DataView? GridView => _gridData?.DefaultView;
     public bool HasGridData => _gridData?.Columns.Count > 0;
 
     // Fired after OCR fills a cell so DataGridView can advance selection
-    public event Action<int, int>? RequestCellFocus;
+    public event Action<int, int> RequestCellFocus;
 
-    // ── Observable properties ─────────────────────────────────────────────────
+    #region properties
     [ObservableProperty] private BitmapSource? _previewImage;
     [ObservableProperty] private string _ocrText = string.Empty;
     [ObservableProperty] private bool _hasResult;
@@ -55,6 +58,8 @@ public partial class MainViewModel : ViewBaseModel
     public ObservableCollection<RegionBox> RegionBoxes { get; } = new();
     public bool HasRegionBoxes => RegionBoxes.Count > 0;
     public string RegionModeLabel => IsRegionMode ? "Stop Drawing" : "Draw Regions";
+
+    #endregion
 
     public MainViewModel() : this(new TrOcrService()) { }
 
@@ -76,7 +81,7 @@ public partial class MainViewModel : ViewBaseModel
                 : "Ready — open or drop an image to begin.";
     }
 
-    // ── OCR commands ──────────────────────────────────────────────────────────
+    #region OCR commands 
 
     [RelayCommand]
     private async Task OpenImageAsync()
@@ -84,11 +89,13 @@ public partial class MainViewModel : ViewBaseModel
         if (IsProcessing) return;
         string? path = GetFilePath("Image Files", "*.png;*.jpg;*.jpeg;*.bmp;*.tiff;*.gif", "Open Image");
         if (path is null) return;
+        ImageListHelper help = new ImageListHelper();
 
-        AddToImageList(path);
+
+        help.AddToImageList(path, ImageList);
         await LoadImageAsync(path);
-        EnsureImageNameColumn();
-        ManageDataGridRowForImage(Path.GetFileName(path));
+        help.EnsureImageNameColumn(_gridData);
+        help.ManageDataGridRowForImage(Path.GetFileName(path), _gridData, _selectedRowIndex, _selectedCellColumn, ImageList, RequestCellFocus);
     }
 
     [RelayCommand]
@@ -104,6 +111,8 @@ public partial class MainViewModel : ViewBaseModel
 
         try
         {
+            DataGridHelper dataHelp = new DataGridHelper();
+
             if (!_ocrService.IsModelLoaded)
             {
                 StatusMessage = "Loading TrOCR models (first run may take a moment)...";
@@ -118,7 +127,7 @@ public partial class MainViewModel : ViewBaseModel
                 StatusMessage = result.Length > 0
                     ? $"Done — {result.Length} characters recognized."
                     : "Done — no text detected.";
-                FillSelectedCell(result);
+                dataHelp.FillSelectedCell(result, _gridData, _selectedRowIndex, _selectedCellColumn, RequestCellFocus);
             }
             else
             {
@@ -130,7 +139,7 @@ public partial class MainViewModel : ViewBaseModel
                     box.ExtractedText = await _ocrService.RecognizeRegionAsync(
                         _currentImagePath, box.ImageBounds);
                     parts.Add($"[Region {box.Id}]\n{box.ExtractedText}");
-                    FillSelectedCell(box.ExtractedText ?? string.Empty);
+                    dataHelp.FillSelectedCell(box.ExtractedText ?? string.Empty, _gridData, _selectedRowIndex, _selectedCellColumn, RequestCellFocus);
                 }
                 OcrText = string.Join("\n\n", parts);
                 HasResult = !string.IsNullOrWhiteSpace(OcrText);
@@ -152,10 +161,12 @@ public partial class MainViewModel : ViewBaseModel
     [RelayCommand]
     private async Task DropImageAsync(string path)
     {
-        AddToImageList(path);
+        ImageListHelper help = new ImageListHelper();
+
+        help.AddToImageList(path, ImageList);
         await LoadImageAsync(path);
-        EnsureImageNameColumn();
-        ManageDataGridRowForImage(Path.GetFileName(path));
+        help.EnsureImageNameColumn(_gridData);
+        help.ManageDataGridRowForImage(Path.GetFileName(path), _gridData, _selectedRowIndex, _selectedCellColumn, ImageList, RequestCellFocus);
     }
 
     [RelayCommand]
@@ -191,6 +202,7 @@ public partial class MainViewModel : ViewBaseModel
         IsRegionMode = false;
         ImageRotation = 0;
         RegionBoxes.Clear();
+        ImageList.Clear();
         StatusMessage = "Ready — open or drop an image to begin.";
     }
 
@@ -212,7 +224,9 @@ public partial class MainViewModel : ViewBaseModel
         StatusMessage = "Regions cleared.";
     }
 
-    // ── Image-list command ────────────────────────────────────────────────────
+    #endregion
+
+    #region Image-list command
 
     [RelayCommand]
     private void OpenFolder()
@@ -242,7 +256,9 @@ public partial class MainViewModel : ViewBaseModel
         StatusMessage = $"Loaded {images.Count} image(s) from \"{Path.GetFileName(folder)}\".";
     }
 
-    // ── DataGrid commands ─────────────────────────────────────────────────────
+    #endregion
+
+    #region DataGrid commands
 
     [RelayCommand]
     private void ImportTemplate()
@@ -288,9 +304,12 @@ public partial class MainViewModel : ViewBaseModel
     {
         if (_gridData is null) return;
 
+        ImageListHelper imageHelp = new ImageListHelper();
+        DataGridHelper dataHelp = new DataGridHelper();
+
         string? currentImage = _selectedImageItem?.FileName;
         int insertAt = currentImage is not null
-            ? InsertionIndexAfterLastRowOf(currentImage)
+            ? imageHelp.InsertionIndexAfterLastRowOf(currentImage, _gridData, ImageList)
             : _gridData.Rows.Count;
 
         var newRow = _gridData.NewRow();
@@ -299,10 +318,10 @@ public partial class MainViewModel : ViewBaseModel
 
         _gridData.Rows.InsertAt(newRow, insertAt);
         _selectedRowIndex = insertAt;
-        _selectedCellColumn = FirstEditableColumn();
+        _selectedCellColumn = dataHelp.FirstEditableColumn(_gridData);
 
         if (_selectedCellColumn is not null)
-            RequestCellFocus?.Invoke(_selectedRowIndex, GetColumnIndex(_selectedCellColumn));
+            RequestCellFocus?.Invoke(_selectedRowIndex, dataHelp.GetColumnIndex(_selectedCellColumn, _gridData));
 
         StatusMessage = $"Row {_gridData.Rows.Count} added.";
     }
@@ -352,185 +371,10 @@ public partial class MainViewModel : ViewBaseModel
         _selectedCellColumn = columnName;
         _selectedRowIndex = rowIndex;
     }
+    #endregion
 
-    // ── Image-list helpers ────────────────────────────────────────────────────
-
-    private void AddToImageList(string fullPath)
-    {
-        if (!ImageList.Any(i => i.FullPath.Equals(fullPath, StringComparison.OrdinalIgnoreCase)))
-            ImageList.Add(new ImageItem { FileName = Path.GetFileName(fullPath), FullPath = fullPath });
-    }
-
-    private async Task HandleImageSelectionAsync(ImageItem item)
-    {
-        await LoadImageAsync(item.FullPath);
-        if (_gridData is null) return; // No template yet — skip row management
-        EnsureImageNameColumn();
-        ManageDataGridRowForImage(item.FileName);
-    }
-
-    /// <summary>
-    /// Ensures "ImageName" column exists in the DataTable as the first column.
-    /// </summary>
-    private void EnsureImageNameColumn()
-    {
-        if (_gridData is null || _gridData.Columns.Contains("ImageName")) return;
-        _gridData.Columns.Add("ImageName");
-        _gridData.Columns["ImageName"]!.SetOrdinal(0);
-        OnPropertyChanged(nameof(GridView));
-    }
-
-    /// <summary>
-    /// Finds or creates a DataGrid row for the given image name, respecting
-    /// insertion order so that each image's rows stay grouped together in
-    /// the same order they appear in the ImageList.
-    /// </summary>
-    private void ManageDataGridRowForImage(string imageName)
-    {
-        if (_gridData is null) return;
-
-        // Find the first existing row for this image
-        int existingRow = -1;
-        if (_gridData.Columns.Contains("ImageName"))
-        {
-            for (int i = 0; i < _gridData.Rows.Count; i++)
-            {
-                if (_gridData.Rows[i]["ImageName"]?.ToString() == imageName)
-                {
-                    existingRow = i;
-                    break;
-                }
-            }
-        }
-
-        if (existingRow >= 0)
-        {
-            _selectedRowIndex = existingRow;
-        }
-        else
-        {
-            // No row yet — insert at the position that keeps image groups in order
-            int insertAt = FirstInsertionIndexFor(imageName);
-            var newRow = _gridData.NewRow();
-            if (_gridData.Columns.Contains("ImageName"))
-                newRow["ImageName"] = imageName;
-            _gridData.Rows.InsertAt(newRow, insertAt);
-            _selectedRowIndex = insertAt;
-        }
-
-        _selectedCellColumn = FirstEditableColumn();
-        if (_selectedCellColumn is not null)
-            RequestCellFocus?.Invoke(_selectedRowIndex, GetColumnIndex(_selectedCellColumn));
-    }
-
-    /// <summary>
-    /// Returns the index where the first row for <paramref name="imageName"/>
-    /// should be inserted so that image groups follow ImageList order.
-    /// E.g. if Image1 rows already exist, a new Image2 row goes after them.
-    /// If later you add another Image1 row (back-navigation), it still goes
-    /// before any Image2 rows.
-    /// </summary>
-    private int FirstInsertionIndexFor(string imageName)
-    {
-        int imageListIdx = IndexInImageList(imageName);
-        if (imageListIdx < 0 || _gridData is null)
-            return _gridData?.Rows.Count ?? 0;
-
-        // Scan rows in order; stop at the first row whose image comes AFTER
-        // imageName in the ImageList — insert before that row.
-        for (int r = 0; r < _gridData.Rows.Count; r++)
-        {
-            string rowImage = _gridData.Rows[r]["ImageName"]?.ToString() ?? string.Empty;
-            int rowIdx = IndexInImageList(rowImage);
-            if (rowIdx > imageListIdx)
-                return r;
-        }
-
-        return _gridData.Rows.Count; // Append at end
-    }
-
-    /// <summary>
-    /// Returns the index after the last existing row for <paramref name="imageName"/>.
-    /// Used by the Add Row button so manually added rows stay grouped with
-    /// their image.
-    /// </summary>
-    private int InsertionIndexAfterLastRowOf(string imageName)
-    {
-        if (_gridData is null) return 0;
-
-        int lastRow = -1;
-        if (_gridData.Columns.Contains("ImageName"))
-        {
-            for (int i = 0; i < _gridData.Rows.Count; i++)
-            {
-                if (_gridData.Rows[i]["ImageName"]?.ToString() == imageName)
-                    lastRow = i;
-            }
-        }
-
-        return lastRow >= 0 ? lastRow + 1 : FirstInsertionIndexFor(imageName);
-    }
-
-    private int IndexInImageList(string fileName)
-    {
-        for (int i = 0; i < ImageList.Count; i++)
-            if (ImageList[i].FileName == fileName) return i;
-        return -1;
-    }
-
-    // ── DataGrid cell helpers ─────────────────────────────────────────────────
-
-    /// <summary>
-    /// Writes OCR text into the currently selected cell and advances to the
-    /// next editable column (skipping ImageName which is auto-managed).
-    /// </summary>
-    private void FillSelectedCell(string text)
-    {
-        if (_gridData is null || _selectedRowIndex < 0) return;
-        if (_selectedRowIndex >= _gridData.Rows.Count) return;
-
-        // Skip ImageName column — never overwrite it via OCR
-        if (_selectedCellColumn == "ImageName" || _selectedCellColumn is null)
-            _selectedCellColumn = FirstEditableColumn();
-
-        if (_selectedCellColumn is null || !_gridData.Columns.Contains(_selectedCellColumn)) return;
-
-        _gridData.Rows[_selectedRowIndex][_selectedCellColumn] = text;
-
-        string? next = NextEditableColumn(_selectedCellColumn);
-        if (next is not null) _selectedCellColumn = next;
-        RequestCellFocus?.Invoke(_selectedRowIndex, GetColumnIndex(_selectedCellColumn));
-    }
-
-    /// <summary>Returns the first column that is not "ImageName".</summary>
-    private string? FirstEditableColumn()
-    {
-        if (_gridData is null) return null;
-        foreach (DataColumn col in _gridData.Columns)
-            if (col.ColumnName != "ImageName") return col.ColumnName;
-        return null;
-    }
-
-    /// <summary>Returns the next non-ImageName column after <paramref name="current"/>, or null if none.</summary>
-    private string? NextEditableColumn(string current)
-    {
-        if (_gridData is null) return null;
-        int idx = GetColumnIndex(current);
-        for (int i = idx + 1; i < _gridData.Columns.Count; i++)
-            if (_gridData.Columns[i].ColumnName != "ImageName")
-                return _gridData.Columns[i].ColumnName;
-        return null;
-    }
-
-    private int GetColumnIndex(string colName)
-    {
-        if (_gridData is null || !_gridData.Columns.Contains(colName)) return 0;
-        return _gridData.Columns[colName]!.Ordinal;
-    }
-
-    // ── Image loader ──────────────────────────────────────────────────────────
-
-    private async Task LoadImageAsync(string path)
+    
+    public async Task LoadImageAsync(string path)
     {
         try
         {
@@ -558,4 +402,6 @@ public partial class MainViewModel : ViewBaseModel
             StatusMessage = $"Failed to load image: {ex.Message}";
         }
     }
+
+
 }
