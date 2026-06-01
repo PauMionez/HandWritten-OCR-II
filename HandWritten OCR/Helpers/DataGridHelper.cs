@@ -24,6 +24,9 @@ namespace HandWritten_OCR.Helpers
 
             if (selectedCellColumn is null || !gridData.Columns.Contains(selectedCellColumn)) return;
 
+            // Snap a misread month to the nearest known form — date columns only.
+            text = MonthFieldCorrector.Apply(text, selectedCellColumn);
+
             gridData.Rows[selectedRowIndex][selectedCellColumn] = text;
 
             string? next = NextEditableColumn(selectedCellColumn, gridData);
