@@ -375,7 +375,8 @@ public sealed class TrOcrService : IOcrService, IDisposable
 
         if (byteList.Count == 0) return string.Empty;
         // CollectionsMarshal.AsSpan avoids a List<byte>.ToArray() copy before UTF-8 decode.
-        return Encoding.UTF8.GetString(CollectionsMarshal.AsSpan(byteList)).Trim();
+        string raw = Encoding.UTF8.GetString(CollectionsMarshal.AsSpan(byteList)).Trim();
+        return ApplyCursiveCorrections(raw);
     }
 
     // ── Preprocessing ─────────────────────────────────────────────────────────
@@ -431,7 +432,6 @@ public sealed class TrOcrService : IOcrService, IDisposable
         int stride    = bmpData.Stride;
         int planeSize = ImageSize * ImageSize;
 
-        // Parallel over rows; each row writes to non-overlapping slices of `pixels`.
         Parallel.For(0, ImageSize, py =>
         {
             int rowBase = py * stride;
@@ -448,6 +448,39 @@ public sealed class TrOcrService : IOcrService, IDisposable
         });
 
         return pixels;
+    }
+
+    // TrOCR confuses historical cursive capital J with f (same descending loop shape).
+    // This table maps known wrong first-word readings to their correct form when
+    // the rest of the token stream looks like a date (digits follow).
+    private static readonly (string Wrong, string Right)[] s_cursiveCorrections =
+    [
+        ("fany",    "Jany"),
+        ("fanny",   "Jany"),
+        ("fanu",    "Janu"),
+        ("january", "January"),
+        ("fanuary", "January"),
+        ("feb",     "Feb"),
+        ("fune",    "June"),
+        ("fuly",    "July"),
+    ];
+
+    private static string ApplyCursiveCorrections(string text)
+    {
+        if (text.Length == 0) return text;
+
+        // Only correct the leading word — digits and punctuation after it are reliable.
+        int wordEnd = 0;
+        while (wordEnd < text.Length && char.IsLetter(text[wordEnd])) wordEnd++;
+        if (wordEnd == 0) return text;
+
+        string firstWord = text[..wordEnd];
+        foreach (var (wrong, right) in s_cursiveCorrections)
+        {
+            if (firstWord.Equals(wrong, StringComparison.OrdinalIgnoreCase))
+                return right + text[wordEnd..];
+        }
+        return text;
     }
 
     // GPT-2 byte-level BPE: builds char→byte lookup so decode avoids per-char ToString().
