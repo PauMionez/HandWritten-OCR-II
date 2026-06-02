@@ -45,35 +45,9 @@
             <Grid>
                 <Image Source="{Binding PreviewImage}" VirtualizingPanel.IsVirtualizing="True"  Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}"/>
 
-                <!-- Region display layer — renders saved boxes; never eats mouse events -->
-                <ItemsControl ItemsSource="{Binding RegionBoxes}"
-                              IsHitTestVisible="False"
-                              Visibility="{Binding PreviewImage, Converter={StaticResource NullToVis}}">
-                    <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <Canvas/>
-                        </ItemsPanelTemplate>
-                    </ItemsControl.ItemsPanel>
-                    <ItemsControl.ItemContainerStyle>
-                        <Style TargetType="ContentPresenter">
-                            <Setter Property="Canvas.Left" Value="{Binding CanvasBounds.X}"/>
-                            <Setter Property="Canvas.Top"  Value="{Binding CanvasBounds.Y}"/>
-                        </Style>
-                    </ItemsControl.ItemContainerStyle>
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Grid>
-                                <Border Width="{Binding CanvasBounds.Width}"
-                                        Height="{Binding CanvasBounds.Height}"
-                                        BorderBrush="#4080FF" BorderThickness="2"
-                                        Background="#204080FF"/>
-                                <TextBlock Text="{Binding Id, StringFormat='#{0}'}"
-                                           Foreground="White" FontWeight="Bold" FontSize="11"
-                                           Margin="4,2" VerticalAlignment="Top" HorizontalAlignment="Left"/>
-                            </Grid>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
+                <!-- Saved region boxes are painted directly on the drawing canvas below
+                     (RegionSelectionBehavior), so they share its exact coordinate origin
+                     and can never drift relative to the rubber band. -->
 
                 <!-- Drawing canvas — captures mouse only when region mode is active -->
                 <Canvas Background="Transparent"

@@ -82,23 +82,100 @@ public sealed class RegionSelectionBehavior : Behavior<Canvas>
 
     // ── Collection tracking ──────────────────────────────────────────────────
 
+    // Persistent box visuals, painted directly on the drawing canvas (NOT a
+    // separate ItemsControl). The rubber band renders correctly on this canvas,
+    // so a committed box drawn here at the same coordinates lines up exactly —
+    // there is no second layer to drift out of alignment.
+    private readonly Dictionary<RegionBox, List<UIElement>> _boxVisuals = new();
+
     private static void OnRegionBoxesChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         var self = (RegionSelectionBehavior)d;
         if (e.OldValue is ObservableCollection<RegionBox> old)
+        {
             old.CollectionChanged -= self.OnCollectionChanged;
+            self.ClearAllBoxVisuals();
+        }
         if (e.NewValue is ObservableCollection<RegionBox> @new)
+        {
             @new.CollectionChanged += self.OnCollectionChanged;
+            // Render any boxes that already exist (e.g. a loaded template).
+            foreach (var box in @new) self.AddBoxVisual(box);
+        }
     }
 
-    private void OnCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) { }
+    private void OnCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        switch (e.Action)
+        {
+            case NotifyCollectionChangedAction.Add:
+                if (e.NewItems is not null)
+                    foreach (RegionBox box in e.NewItems) AddBoxVisual(box);
+                break;
+            case NotifyCollectionChangedAction.Remove:
+                if (e.OldItems is not null)
+                    foreach (RegionBox box in e.OldItems) RemoveBoxVisual(box);
+                break;
+            case NotifyCollectionChangedAction.Reset:
+                ClearAllBoxVisuals();
+                break;
+        }
+    }
 
-    // Recalculate display bounds for every existing box when the canvas is resized.
+    // Paint a box (outline + id label) on the drawing canvas at its CanvasBounds.
+    // Centered stroke mirrors the rubber band so the committed box lands exactly
+    // where it was drawn.
+    private void AddBoxVisual(RegionBox box)
+    {
+        if (_boxVisuals.ContainsKey(box)) return;
+
+        var rect = new Rectangle
+        {
+            Width  = box.CanvasBounds.Width,
+            Height = box.CanvasBounds.Height,
+            Stroke = new SolidColorBrush(Color.FromRgb(64, 128, 255)),
+            StrokeThickness = 2,
+            Fill = new SolidColorBrush(Color.FromArgb(32, 64, 128, 255)),
+            IsHitTestVisible = false
+        };
+        Canvas.SetLeft(rect, box.CanvasBounds.X);
+        Canvas.SetTop(rect, box.CanvasBounds.Y);
+
+        var label = new TextBlock
+        {
+            Text = $"#{box.Id}",
+            Foreground = new SolidColorBrush(Colors.White),
+            FontWeight = FontWeights.Bold,
+            FontSize = 11,
+            IsHitTestVisible = false
+        };
+        Canvas.SetLeft(label, box.CanvasBounds.X + 3);
+        Canvas.SetTop(label, box.CanvasBounds.Y + 1);
+
+        AssociatedObject.Children.Add(rect);
+        AssociatedObject.Children.Add(label);
+        _boxVisuals[box] = new List<UIElement> { rect, label };
+    }
+
+    private void RemoveBoxVisual(RegionBox box)
+    {
+        if (!_boxVisuals.TryGetValue(box, out var visuals)) return;
+        foreach (var v in visuals) AssociatedObject.Children.Remove(v);
+        _boxVisuals.Remove(box);
+    }
+
+    private void ClearAllBoxVisuals()
+    {
+        foreach (var visuals in _boxVisuals.Values)
+            foreach (var v in visuals) AssociatedObject.Children.Remove(v);
+        _boxVisuals.Clear();
+    }
+
+    // No resize recompute: boxes are positioned in canvas coords at draw time and
+    // share the image's transform, so they track the image during pan/zoom. (A
+    // window resize won't rescale them — acceptable; OCR uses fixed ImageBounds.)
     private void OnCanvasSizeChanged(object sender, SizeChangedEventArgs e)
     {
-        if (RegionBoxes is null || ImageSource is null) return;
-        foreach (var box in RegionBoxes)
-            box.CanvasBounds = ToCanvas(box.ImageBounds);
     }
 
     // ── Mouse handlers ───────────────────────────────────────────────────────
