@@ -18,15 +18,24 @@ public static class MonthFieldCorrector
     // books. Spellings are matched case-insensitively against the leading word.
     private static readonly (string Canonical, string[] Forms)[] s_months =
     {
-        ("Jany",  new[] { "jany", "jan", "janu", "january" }),
+        // The "f*" spellings are the systematic cursive misread: a historical
+        // capital "J" shares the descending loop of an "f", so TrOCR reads
+        // Jany/June/July as fany/fune/fuly. Listing them as accepted forms lets
+        // the fuzzy pass absorb their near-misses too (e.g. "fanny", "funne").
+        ("Jany",  new[] { "jany", "jan", "janu", "january",
+                          "fany", "fanny", "fanu", "fanuary" }),
         ("Feb",   new[] { "feb", "febr", "february" }),
         ("March", new[] { "march", "mar" }),
         ("April", new[] { "april", "apr" }),
         ("May",   new[] { "may" }),
-        ("June",  new[] { "june", "jun" }),
-        ("July",  new[] { "july", "jul" }),
+        ("June",  new[] { "june", "jun", "fune" }),
+        ("July",  new[] { "july", "jul", "fuly" }),
         ("Aug",   new[] { "aug", "august" }),
-        ("Sept",  new[] { "sept", "sep", "septr", "september" }),
+        // Cursive "Sept": the descending "pt" ligature reads as "fre"/"fit"/"fr".
+        // Listing these shapes as accepted forms lets the fuzzy pass absorb the
+        // long tail (e.g. "seffre", "sefte") that the exact table can't enumerate.
+        ("Sept",  new[] { "sept", "sep", "septr", "september",
+                          "sefre", "sefe", "sefit", "sepre", "sefr", "sefte", "seft" }),
         ("Oct",   new[] { "oct", "octr", "october" }),
         ("Nov",   new[] { "nov", "novr", "november" }),
         ("Dec",   new[] { "dec", "decr", "december" }),

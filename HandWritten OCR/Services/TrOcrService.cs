@@ -463,9 +463,11 @@ public sealed class TrOcrService : IOcrService, IDisposable
         ("feb",     "Feb"),
         ("fune",    "June"),
         ("fuly",    "July"),
-        // Cursive "Sept" abbreviation: the descending "pt" ligature reads as "fre"/"fit".
+        // Cursive "Sept" abbreviation: the descending "pt" ligature reads as "fre"/"fit"/"fee".
         ("sefre",   "Sept"),
         ("sefe",    "Sept"),
+        ("sefee",   "Sept"),
+        ("seffe",   "Sept"),
         ("sefit",   "Sept"),
         ("sepre",   "Sept"),
         ("sefr",    "Sept"),
