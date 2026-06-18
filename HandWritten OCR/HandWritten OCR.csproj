@@ -20,4 +20,16 @@
     <PackageReference Include="ClosedXML" Version="0.104.2" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="models\TrOcr\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="models\KrakenOcr\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="KrakenServer\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>
