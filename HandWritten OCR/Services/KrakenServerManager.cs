@@ -8,7 +8,8 @@ public sealed class KrakenServerManager : IDisposable
 {
     private static readonly HttpClient _healthClient = new() { Timeout = TimeSpan.FromSeconds(2) };
     private const string HealthUrl = "http://localhost:5001/health";
-    private const string PythonPath = @"D:\AI\venv\Scripts\python.exe";
+    private static readonly string PythonPath =
+        Path.Combine(AppContext.BaseDirectory, "KrakenVenv", "Scripts", "python.exe");
     private static readonly string ScriptPath =
         Path.Combine(AppContext.BaseDirectory, "KrakenServer", "kraken_server_v2.py");
 

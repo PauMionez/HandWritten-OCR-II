@@ -6,10 +6,12 @@
 # Claude AI
 .claude/
 
-# OCR model files — large binaries, not tracked in git
-# Users must place model files manually before running:
-#   bin/Debug(or Release)/net8.0-windows/models/TrOcr/     (encoder_model.onnx, decoder_model.onnx, vocab.json, ...)
-#   bin/Debug(or Release)/net8.0-windows/models/KrakenOcr/ (*.mlmodel)
+# OCR model files and Python venv — large binaries, not tracked in git
+# Users must place these manually before running:
+#   bin/Debug(or Release)/net8.0-windows/KrakenVenv/        (Python venv with kraken installed)
+#   bin/Debug(or Release)/net8.0-windows/models/TrOcr/      (encoder_model.onnx, decoder_model.onnx, vocab.json, ...)
+#   bin/Debug(or Release)/net8.0-windows/models/KrakenOcr/  (*.mlmodel)
+**/KrakenVenv/
 **/models/TrOcr/
 **/models/KrakenOcr/
 *.onnx
