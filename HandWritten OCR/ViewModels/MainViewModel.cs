@@ -10,12 +10,15 @@ using System.Data;
 using System.IO;
 using System.Windows;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 
 namespace HandWritten_OCR.ViewModels;
 
 public partial class MainViewModel : ViewBaseModel
 {
     private readonly IOcrService _ocrService;
+    private readonly IKrakenService _krakenService;
+    private readonly KrakenServerManager _krakenServerManager;
     private readonly ExcelService _excelService = new();
     private readonly string _modelFolder;
     private string? _currentImagePath;
@@ -63,20 +66,54 @@ public partial class MainViewModel : ViewBaseModel
     [ObservableProperty] private bool _isRegionMode;
     [ObservableProperty] private double _imageRotation = 0;
 
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsKrakenSelected), nameof(IsTrOcrSelected))]
+    private OcrEngine _selectedEngine = OcrEngine.TrOCR;
+
+    [ObservableProperty] private int _selectedKrakenModelIndex = 0;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(KrakenServerStatusText))]
+    private bool _isKrakenServerReady;
+
+    public bool IsKrakenSelected
+    {
+        get => SelectedEngine == OcrEngine.KrakenHTR;
+        set { if (value) SelectedEngine = OcrEngine.KrakenHTR; }
+    }
+
+    public bool IsTrOcrSelected
+    {
+        get => SelectedEngine == OcrEngine.TrOCR;
+        set { if (value) SelectedEngine = OcrEngine.TrOCR; }
+    }
+
+    public string KrakenServerStatusText => IsKrakenServerReady ? "Kraken server ready" : "Kraken server starting...";
+
     public ObservableCollection<RegionBox> RegionBoxes { get; } = new();
     public bool HasRegionBoxes => RegionBoxes.Count > 0;
     public string RegionModeLabel => IsRegionMode ? "Stop Drawing" : "Draw Regions";
 
     #endregion
 
-    public MainViewModel() : this(new TrOcrService()) { }
+    public MainViewModel() : this(
+        new TrOcrService(),
+        new KrakenService(),
+        App.KrakenServerManager)
+    { }
 
-    public MainViewModel(IOcrService ocrService)
+    public MainViewModel(IOcrService ocrService, IKrakenService krakenService, KrakenServerManager krakenServerManager)
     {
         _ocrService = ocrService;
-        _modelFolder = Path.Combine(AppContext.BaseDirectory, "models");
+        _krakenService = krakenService;
+        _krakenServerManager = krakenServerManager;
+        _modelFolder = Path.Combine(AppContext.BaseDirectory, "models", "TrOcr");
         RegionBoxes.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasRegionBoxes));
         ImageList.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasImageList));
+
+        IsKrakenServerReady = _krakenServerManager.IsReady;
+        _krakenServerManager.IsReadyChanged += ready =>
+            Application.Current.Dispatcher.Invoke(() => IsKrakenServerReady = ready);
     }
 
     partial void OnIsRegionModeChanged(bool value)
@@ -121,40 +158,74 @@ public partial class MainViewModel : ViewBaseModel
         {
             DataGridHelper dataHelp = new DataGridHelper();
 
-            if (!_ocrService.IsModelLoaded)
+            if (SelectedEngine == OcrEngine.TrOCR)
             {
-                StatusMessage = "Loading TrOCR models (first run may take a moment)...";
-                await _ocrService.LoadModelsAsync(_modelFolder);
-            }
-
-            if (RegionBoxes.Count == 0)
-            {
-                string result = await _ocrService.RecognizeAsync(_currentImagePath);
-                OcrText = result;
-                HasResult = !string.IsNullOrWhiteSpace(result);
-                StatusMessage = result.Length > 0
-                    ? $"Done — {result.Length} characters recognized."
-                    : "Done — no text detected.";
-                dataHelp.FillSelectedCell(result, _gridData, _selectedRowIndex, _selectedCellColumn, RequestCellFocus);
-            }
-            else
-            {
-                var parts = new List<string>(RegionBoxes.Count);
-                for (int i = 0; i < RegionBoxes.Count; i++)
+                if (!_ocrService.IsModelLoaded)
                 {
-                    RegionBox box = RegionBoxes[i];
-                    StatusMessage = $"Processing region {i + 1} of {RegionBoxes.Count}...";
-                    box.ExtractedText = await _ocrService.RecognizeRegionAsync(
-                        _currentImagePath, box.ImageBounds);
-                    parts.Add($"[Region {box.Id}]\n{box.ExtractedText}");
-                    int rowFilled = _selectedRowIndex;
-                    string? writtenColumn = dataHelp.FillSelectedCell(box.ExtractedText ?? string.Empty, _gridData, _selectedRowIndex, _selectedCellColumn, RequestCellFocus);
-                    if (writtenColumn is not null && rowFilled >= 0)
-                        _cellProvenance[(rowFilled, writtenColumn)] = new CellProvenance(_currentImagePath, box.ImageBounds);
+                    StatusMessage = "Loading TrOCR models (first run may take a moment)...";
+                    await _ocrService.LoadModelsAsync(_modelFolder);
                 }
-                OcrText = string.Join("\n\n", parts);
-                HasResult = !string.IsNullOrWhiteSpace(OcrText);
-                StatusMessage = $"Done — {RegionBoxes.Count} region(s) processed.";
+
+                if (RegionBoxes.Count == 0)
+                {
+                    string result = await _ocrService.RecognizeAsync(_currentImagePath);
+                    OcrText = result;
+                    HasResult = !string.IsNullOrWhiteSpace(result);
+                    StatusMessage = result.Length > 0
+                        ? $"Done — {result.Length} characters recognized."
+                        : "Done — no text detected.";
+                    dataHelp.FillSelectedCell(result, _gridData, _selectedRowIndex, _selectedCellColumn, RequestCellFocus);
+                }
+                else
+                {
+                    var parts = new List<string>(RegionBoxes.Count);
+                    for (int i = 0; i < RegionBoxes.Count; i++)
+                    {
+                        RegionBox box = RegionBoxes[i];
+                        StatusMessage = $"Processing region {i + 1} of {RegionBoxes.Count}...";
+                        box.ExtractedText = await _ocrService.RecognizeRegionAsync(
+                            _currentImagePath, box.ImageBounds);
+                        parts.Add($"[Region {box.Id}]\n{box.ExtractedText}");
+                        int rowFilled = _selectedRowIndex;
+                        string? writtenColumn = dataHelp.FillSelectedCell(box.ExtractedText ?? string.Empty, _gridData, _selectedRowIndex, _selectedCellColumn, RequestCellFocus);
+                        if (writtenColumn is not null && rowFilled >= 0)
+                            _cellProvenance[(rowFilled, writtenColumn)] = new CellProvenance(_currentImagePath, box.ImageBounds);
+                    }
+                    OcrText = string.Join("\n\n", parts);
+                    HasResult = !string.IsNullOrWhiteSpace(OcrText);
+                    StatusMessage = $"Done — {RegionBoxes.Count} region(s) processed.";
+                }
+            }
+            else // KrakenHTR
+            {
+                string modelName = GetKrakenModelName(SelectedKrakenModelIndex);
+
+                if (RegionBoxes.Count == 0)
+                {
+                    string result = await _krakenService.RecognizeAsync(_currentImagePath, modelName);
+                    OcrText = result;
+                    HasResult = !string.IsNullOrWhiteSpace(result);
+                    StatusMessage = result.Length > 0
+                        ? $"Done — {result.Length} characters recognized."
+                        : "Done — no text detected.";
+                    dataHelp.FillSelectedCell(result, _gridData, _selectedRowIndex, _selectedCellColumn, RequestCellFocus);
+                }
+                else
+                {
+                    var parts = new List<string>(RegionBoxes.Count);
+                    for (int i = 0; i < RegionBoxes.Count; i++)
+                    {
+                        RegionBox box = RegionBoxes[i];
+                        StatusMessage = $"Processing region {i + 1} of {RegionBoxes.Count}...";
+                        box.ExtractedText = await _krakenService.RecognizeRegionAsync(
+                            _currentImagePath, box.ImageBounds, modelName);
+                        parts.Add($"[Region {box.Id}]\n{box.ExtractedText}");
+                        dataHelp.FillSelectedCell(box.ExtractedText ?? string.Empty, _gridData, _selectedRowIndex, _selectedCellColumn, RequestCellFocus);
+                    }
+                    OcrText = string.Join("\n\n", parts);
+                    HasResult = !string.IsNullOrWhiteSpace(OcrText);
+                    StatusMessage = $"Done — {RegionBoxes.Count} region(s) processed.";
+                }
             }
         }
         catch (Exception ex)
@@ -168,6 +239,14 @@ public partial class MainViewModel : ViewBaseModel
             IsProcessing = false;
         }
     }
+
+    private static string GetKrakenModelName(int index) => index switch
+    {
+        1 => "tridis_v2_medieval_earlymodern",
+        2 => "catmus-print-fondue-large",
+        3 => "lectaurep_base",
+        _ => "mccatmus_v1"
+    };
 
     [RelayCommand]
     private async Task DropImageAsync(string path)
