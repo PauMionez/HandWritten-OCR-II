@@ -20,10 +20,5 @@
     <PackageReference Include="ClosedXML" Version="0.104.2" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Content Include="KrakenServer\**\*">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-  </ItemGroup>
 
 </Project>

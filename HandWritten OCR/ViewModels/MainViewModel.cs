@@ -17,8 +17,6 @@ namespace HandWritten_OCR.ViewModels;
 public partial class MainViewModel : ViewBaseModel
 {
     private readonly IOcrService _ocrService;
-    private readonly IKrakenService _krakenService;
-    private readonly KrakenServerManager _krakenServerManager;
     private readonly ExcelService _excelService = new();
     private readonly string _modelFolder;
     private string? _currentImagePath;
@@ -58,29 +56,6 @@ public partial class MainViewModel : ViewBaseModel
     [ObservableProperty] private bool _isRegionMode;
     [ObservableProperty] private double _imageRotation = 0;
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsKrakenSelected), nameof(IsTrOcrSelected))]
-    private OcrEngine _selectedEngine = OcrEngine.TrOCR;
-
-    [ObservableProperty] private int _selectedKrakenModelIndex = 0;
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(KrakenServerStatusText))]
-    private bool _isKrakenServerReady;
-
-    public bool IsKrakenSelected
-    {
-        get => SelectedEngine == OcrEngine.KrakenHTR;
-        set { if (value) SelectedEngine = OcrEngine.KrakenHTR; }
-    }
-
-    public bool IsTrOcrSelected
-    {
-        get => SelectedEngine == OcrEngine.TrOCR;
-        set { if (value) SelectedEngine = OcrEngine.TrOCR; }
-    }
-
-    public string KrakenServerStatusText => IsKrakenServerReady ? "Kraken server ready" : "Kraken server starting...";
 
     public ObservableCollection<RegionBox> RegionBoxes { get; } = new();
     public bool HasRegionBoxes => RegionBoxes.Count > 0;
@@ -88,24 +63,14 @@ public partial class MainViewModel : ViewBaseModel
 
     #endregion
 
-    public MainViewModel() : this(
-        new TrOcrService(),
-        new KrakenService(),
-        App.KrakenServerManager)
-    { }
+    public MainViewModel() : this(new TrOcrService()) { }
 
-    public MainViewModel(IOcrService ocrService, IKrakenService krakenService, KrakenServerManager krakenServerManager)
+    public MainViewModel(IOcrService ocrService)
     {
         _ocrService = ocrService;
-        _krakenService = krakenService;
-        _krakenServerManager = krakenServerManager;
         _modelFolder = Path.Combine(AppContext.BaseDirectory, "models", "TrOcr");
         RegionBoxes.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasRegionBoxes));
         ImageList.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasImageList));
-
-        IsKrakenServerReady = _krakenServerManager.IsReady;
-        _krakenServerManager.IsReadyChanged += ready =>
-            Application.Current.Dispatcher.Invoke(() => IsKrakenServerReady = ready);
     }
 
     partial void OnIsRegionModeChanged(bool value)
@@ -150,13 +115,11 @@ public partial class MainViewModel : ViewBaseModel
         {
             DataGridHelper dataHelp = new DataGridHelper();
 
-            if (SelectedEngine == OcrEngine.TrOCR)
+            if (!_ocrService.IsModelLoaded)
             {
-                if (!_ocrService.IsModelLoaded)
-                {
-                    StatusMessage = "Loading TrOCR models (first run may take a moment)...";
-                    await _ocrService.LoadModelsAsync(_modelFolder);
-                }
+                StatusMessage = "Loading TrOCR models (first run may take a moment)...";
+                await _ocrService.LoadModelsAsync(_modelFolder);
+            }
 
             if (RegionBoxes.Count == 0)
             {
@@ -196,14 +159,6 @@ public partial class MainViewModel : ViewBaseModel
             IsProcessing = false;
         }
     }
-
-    private static string GetKrakenModelName(int index) => index switch
-    {
-        1 => "tridis_v2_medieval_earlymodern",
-        2 => "catmus-print-fondue-large",
-        3 => "lectaurep_base",
-        _ => "mccatmus_v1"
-    };
 
     [RelayCommand]
     private async Task DropImageAsync(string path)

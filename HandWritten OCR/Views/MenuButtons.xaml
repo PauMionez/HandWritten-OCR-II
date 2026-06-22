@@ -16,57 +16,8 @@
 
 
     <Grid>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-
-        <!-- Engine / model / status row -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,6">
-            <TextBlock Text="OCR Engine:" VerticalAlignment="Center"
-                       Margin="0,0,8,0" FontSize="12"
-                       Foreground="{DynamicResource SecondaryTextBrush}"/>
-            <RadioButton Content="TrOCR"
-                         IsChecked="{Binding IsTrOcrSelected, Mode=TwoWay}"
-                         GroupName="OcrEngine" VerticalAlignment="Center" Margin="0,0,6,0"/>
-            <RadioButton Content="Kraken HTR"
-                         IsChecked="{Binding IsKrakenSelected, Mode=TwoWay}"
-                         GroupName="OcrEngine" VerticalAlignment="Center"/>
-
-            <!-- Model selector — visible when Kraken HTR is selected -->
-            <ComboBox SelectedIndex="{Binding SelectedKrakenModelIndex}"
-                      Margin="12,0,0,0" MinWidth="240" VerticalAlignment="Center"
-                      Visibility="{Binding IsKrakenSelected, Converter={StaticResource BoolToVis}}">
-                <ComboBoxItem Content="McCATMuS (IT/LA/FR/ES/EN 16-21c) ★"/>
-                <ComboBoxItem Content="TRIDIS v2 (Parish/Legal 11-16c)"/>
-                <ComboBoxItem Content="CATMuS Medieval (French/Italian 12-15c)"/>
-                <ComboBoxItem Content="LECTAUREP (Modern French 19-20c)"/>
-            </ComboBox>
-
-            <!-- Server status indicator — visible when Kraken HTR is selected -->
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center"
-                        Margin="12,0,0,0"
-                        Visibility="{Binding IsKrakenSelected, Converter={StaticResource BoolToVis}}">
-                <Ellipse Width="8" Height="8" VerticalAlignment="Center" Margin="0,0,5,0">
-                    <Ellipse.Style>
-                        <Style TargetType="Ellipse">
-                            <Setter Property="Fill" Value="Orange"/>
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding IsKrakenServerReady}" Value="True">
-                                    <Setter Property="Fill" Value="#2ECC71"/>
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </Ellipse.Style>
-                </Ellipse>
-                <TextBlock Text="{Binding KrakenServerStatusText}" FontSize="11"
-                           VerticalAlignment="Center"
-                           Foreground="{DynamicResource SecondaryTextBrush}"/>
-            </StackPanel>
-        </StackPanel>
-
         <!-- Action buttons row -->
-        <StackPanel Grid.Row="1" Orientation="Horizontal">
+        <StackPanel Orientation="Horizontal">
             <Button Content="Open Image" Margin="0,0,8,0"
              Command="{Binding OpenImageCommand}"
              Style="{StaticResource ButtonPrimary}"/>
