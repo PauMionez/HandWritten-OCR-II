@@ -153,35 +153,6 @@ public class ViewModelRegionTests
         Assert.True(vm.HasRegionBoxes);
     }
 
-    // ── Instant OCR (field-targeted recognition on draw) ──────────────────────
-
-    [Fact]
-    public void AddRegion_WithImageLoaded_RecognizesRegionImmediately()
-    {
-        var fake = new FakeOcrService { RegionResult = "Sept" };
-        var vm = BuildVm(fake);
-        SetImagePath(vm, "dummy.png");
-
-        var box = new RegionBox { ImageBounds = new Rect(0, 0, 100, 100) };
-        vm.AddRegionCommand.Execute(box);
-
-        Assert.Equal(1, fake.RecognizeRegionCallCount);
-        Assert.Equal("Sept", box.ExtractedText);
-    }
-
-    [Fact]
-    public void AddRegion_WithNoImageLoaded_DoesNotRecognize()
-    {
-        var fake = new FakeOcrService();
-        var vm = BuildVm(fake);
-        // no image path set — instant OCR must be skipped
-
-        vm.AddRegionCommand.Execute(new RegionBox { ImageBounds = new Rect(0, 0, 100, 100) });
-
-        Assert.Equal(0, fake.RecognizeRegionCallCount);
-        Assert.Single(vm.RegionBoxes);   // box is still added
-    }
-
     // ── ClearBoxes ────────────────────────────────────────────────────────────
 
     [Fact]
@@ -279,12 +250,10 @@ public class ViewModelRegionTests
         SetImagePath(vm, "dummy.png");
         vm.AddRegionCommand.Execute(new RegionBox { ImageBounds = new Rect(0, 0, 100, 100) });
 
-        // AddRegion already ran instant OCR once; Run OCR must re-process the region.
-        int beforeRun = fake.RecognizeRegionCallCount;
         await RunOcrAsync(vm);
 
         Assert.Equal(0, fake.RecognizeCallCount);
-        Assert.Equal(beforeRun + 1, fake.RecognizeRegionCallCount);
+        Assert.Equal(1, fake.RecognizeRegionCallCount);
     }
 
     [Fact]
@@ -296,10 +265,9 @@ public class ViewModelRegionTests
         vm.AddRegionCommand.Execute(new RegionBox { ImageBounds = new Rect(0,  0, 100, 100) });
         vm.AddRegionCommand.Execute(new RegionBox { ImageBounds = new Rect(50, 0, 100, 100) });
 
-        int beforeRun = fake.RecognizeRegionCallCount;
         await RunOcrAsync(vm);
 
-        Assert.Equal(beforeRun + 2, fake.RecognizeRegionCallCount);
+        Assert.Equal(2, fake.RecognizeRegionCallCount);
     }
 
     [Fact]
@@ -357,9 +325,8 @@ public class ViewModelRegionTests
 
         await RunOcrAsync(vm);
 
-        // Both the instant OCR (on add) and Run OCR pass the same region bounds.
-        Assert.NotEmpty(fake.RegionBoundsReceived);
-        Assert.All(fake.RegionBoundsReceived, b => Assert.Equal(expectedBounds, b));
+        Assert.Single(fake.RegionBoundsReceived);
+        Assert.Equal(expectedBounds, fake.RegionBoundsReceived[0]);
     }
 
     [Fact]

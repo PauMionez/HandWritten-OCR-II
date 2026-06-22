@@ -13,33 +13,25 @@ namespace HandWritten_OCR.Helpers
         /// Writes OCR text into the currently selected cell and advances to the
         /// next editable column (skipping ImageName which is auto-managed).
         /// </summary>
-        /// <returns>
-        /// The name of the column actually written (after the ImageName/first-editable
-        /// resolution), or <c>null</c> if nothing was written. Callers that don't need
-        /// it can ignore the return value.
-        /// </returns>
-        public string? FillSelectedCell(string text, DataTable gridData, int selectedRowIndex, string selectedCellColumn, Action<int, int> RequestCellFocus)
+        public void FillSelectedCell(string text, DataTable gridData, int selectedRowIndex, string selectedCellColumn, Action<int, int> RequestCellFocus)
         {
-            if (gridData is null || selectedRowIndex < 0) return null;
-            if (selectedRowIndex >= gridData.Rows.Count) return null;
+            if (gridData is null || selectedRowIndex < 0) return;
+            if (selectedRowIndex >= gridData.Rows.Count) return;
 
             // Skip ImageName column — never overwrite it via OCR
             if (selectedCellColumn == "ImageName" || selectedCellColumn is null)
                 selectedCellColumn = FirstEditableColumn(gridData);
 
-            if (selectedCellColumn is null || !gridData.Columns.Contains(selectedCellColumn)) return null;
+            if (selectedCellColumn is null || !gridData.Columns.Contains(selectedCellColumn)) return;
 
             // Snap a misread month to the nearest known form — date columns only.
             text = MonthFieldCorrector.Apply(text, selectedCellColumn);
 
             gridData.Rows[selectedRowIndex][selectedCellColumn] = text;
-            string writtenColumn = selectedCellColumn;
 
             string? next = NextEditableColumn(selectedCellColumn, gridData);
             if (next is not null) selectedCellColumn = next;
             RequestCellFocus?.Invoke(selectedRowIndex, GetColumnIndex(selectedCellColumn, gridData));
-
-            return writtenColumn;
         }
 
         /// <summary>Returns the first column that is not "ImageName".</summary>

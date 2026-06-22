@@ -23,14 +23,6 @@ public partial class MainViewModel : ViewBaseModel
     private readonly string _modelFolder;
     private string? _currentImagePath;
 
-    // Remembers which image region produced each filled cell, so a future verify
-    // view can show the source crop next to the value. Keyed by (row, column).
-    private readonly Dictionary<(int Row, string Column), CellProvenance> _cellProvenance = new();
-
-    // Serializes per-region "instant OCR" so rapid draws queue instead of colliding
-    // (without showing the blocking processing overlay).
-    private readonly SemaphoreSlim _instantOcrGate = new(1, 1);
-
     public ObservableCollection<ImageItem> ImageList { get; } = new();
     public bool HasImageList => ImageList.Count > 0;
 
@@ -166,66 +158,31 @@ public partial class MainViewModel : ViewBaseModel
                     await _ocrService.LoadModelsAsync(_modelFolder);
                 }
 
-                if (RegionBoxes.Count == 0)
-                {
-                    string result = await _ocrService.RecognizeAsync(_currentImagePath);
-                    OcrText = result;
-                    HasResult = !string.IsNullOrWhiteSpace(result);
-                    StatusMessage = result.Length > 0
-                        ? $"Done — {result.Length} characters recognized."
-                        : "Done — no text detected.";
-                    dataHelp.FillSelectedCell(result, _gridData, _selectedRowIndex, _selectedCellColumn, RequestCellFocus);
-                }
-                else
-                {
-                    var parts = new List<string>(RegionBoxes.Count);
-                    for (int i = 0; i < RegionBoxes.Count; i++)
-                    {
-                        RegionBox box = RegionBoxes[i];
-                        StatusMessage = $"Processing region {i + 1} of {RegionBoxes.Count}...";
-                        box.ExtractedText = await _ocrService.RecognizeRegionAsync(
-                            _currentImagePath, box.ImageBounds);
-                        parts.Add($"[Region {box.Id}]\n{box.ExtractedText}");
-                        int rowFilled = _selectedRowIndex;
-                        string? writtenColumn = dataHelp.FillSelectedCell(box.ExtractedText ?? string.Empty, _gridData, _selectedRowIndex, _selectedCellColumn, RequestCellFocus);
-                        if (writtenColumn is not null && rowFilled >= 0)
-                            _cellProvenance[(rowFilled, writtenColumn)] = new CellProvenance(_currentImagePath, box.ImageBounds);
-                    }
-                    OcrText = string.Join("\n\n", parts);
-                    HasResult = !string.IsNullOrWhiteSpace(OcrText);
-                    StatusMessage = $"Done — {RegionBoxes.Count} region(s) processed.";
-                }
-            }
-            else // KrakenHTR
+            if (RegionBoxes.Count == 0)
             {
-                string modelName = GetKrakenModelName(SelectedKrakenModelIndex);
-
-                if (RegionBoxes.Count == 0)
+                string result = await _ocrService.RecognizeAsync(_currentImagePath);
+                OcrText = result;
+                HasResult = !string.IsNullOrWhiteSpace(result);
+                StatusMessage = result.Length > 0
+                    ? $"Done — {result.Length} characters recognized."
+                    : "Done — no text detected.";
+                dataHelp.FillSelectedCell(result, _gridData, _selectedRowIndex, _selectedCellColumn, RequestCellFocus);
+            }
+            else
+            {
+                var parts = new List<string>(RegionBoxes.Count);
+                for (int i = 0; i < RegionBoxes.Count; i++)
                 {
-                    string result = await _krakenService.RecognizeAsync(_currentImagePath, modelName);
-                    OcrText = result;
-                    HasResult = !string.IsNullOrWhiteSpace(result);
-                    StatusMessage = result.Length > 0
-                        ? $"Done — {result.Length} characters recognized."
-                        : "Done — no text detected.";
-                    dataHelp.FillSelectedCell(result, _gridData, _selectedRowIndex, _selectedCellColumn, RequestCellFocus);
+                    RegionBox box = RegionBoxes[i];
+                    StatusMessage = $"Processing region {i + 1} of {RegionBoxes.Count}...";
+                    box.ExtractedText = await _ocrService.RecognizeRegionAsync(
+                        _currentImagePath, box.ImageBounds);
+                    parts.Add($"[Region {box.Id}]\n{box.ExtractedText}");
+                    dataHelp.FillSelectedCell(box.ExtractedText ?? string.Empty, _gridData, _selectedRowIndex, _selectedCellColumn, RequestCellFocus);
                 }
-                else
-                {
-                    var parts = new List<string>(RegionBoxes.Count);
-                    for (int i = 0; i < RegionBoxes.Count; i++)
-                    {
-                        RegionBox box = RegionBoxes[i];
-                        StatusMessage = $"Processing region {i + 1} of {RegionBoxes.Count}...";
-                        box.ExtractedText = await _krakenService.RecognizeRegionAsync(
-                            _currentImagePath, box.ImageBounds, modelName);
-                        parts.Add($"[Region {box.Id}]\n{box.ExtractedText}");
-                        dataHelp.FillSelectedCell(box.ExtractedText ?? string.Empty, _gridData, _selectedRowIndex, _selectedCellColumn, RequestCellFocus);
-                    }
-                    OcrText = string.Join("\n\n", parts);
-                    HasResult = !string.IsNullOrWhiteSpace(OcrText);
-                    StatusMessage = $"Done — {RegionBoxes.Count} region(s) processed.";
-                }
+                OcrText = string.Join("\n\n", parts);
+                HasResult = !string.IsNullOrWhiteSpace(OcrText);
+                StatusMessage = $"Done — {RegionBoxes.Count} region(s) processed.";
             }
         }
         catch (Exception ex)
@@ -293,7 +250,6 @@ public partial class MainViewModel : ViewBaseModel
         ImageRotation = 0;
         RegionBoxes.Clear();
         ImageList.Clear();
-        _cellProvenance.Clear();
         StatusMessage = "Ready — open or drop an image to begin.";
     }
 
@@ -305,61 +261,7 @@ public partial class MainViewModel : ViewBaseModel
     {
         box.Id = RegionBoxes.Count + 1;
         RegionBoxes.Add(box);
-        StatusMessage = $"Region {box.Id} added.";
-
-        // Field-targeted instant OCR: recognize this region now and drop the text
-        // into the currently selected cell. Fire-and-forget keeps the command
-        // synchronous (the box is always added even while a prior OCR is running);
-        // the gate serializes the OCR work. The batch "Run OCR" button still works.
-        if (_currentImagePath is not null)
-            _ = RecognizeRegionIntoSelectedCellAsync(box);
-    }
-
-    private async Task RecognizeRegionIntoSelectedCellAsync(RegionBox box)
-    {
-        await _instantOcrGate.WaitAsync();
-        try
-        {
-            string? imagePath = _currentImagePath;
-            if (imagePath is null) return;
-
-            if (!_ocrService.IsModelLoaded)
-            {
-                StatusMessage = "Loading TrOCR models (first run may take a moment)...";
-                await _ocrService.LoadModelsAsync(_modelFolder);
-            }
-
-            StatusMessage = $"Recognizing region {box.Id}...";
-            string text = await _ocrService.RecognizeRegionAsync(imagePath, box.ImageBounds);
-            box.ExtractedText = text;
-
-            // Mirror all region results into the Recognized Text panel.
-            OcrText = string.Join("\n\n", RegionBoxes
-                .Where(b => !string.IsNullOrWhiteSpace(b.ExtractedText))
-                .Select(b => $"[Region {b.Id}]\n{b.ExtractedText}"));
-            HasResult = !string.IsNullOrWhiteSpace(OcrText);
-
-            // Write into the targeted cell and remember where the value came from.
-            var dataHelp = new DataGridHelper();
-            int rowFilled = _selectedRowIndex;
-            string? writtenColumn = dataHelp.FillSelectedCell(
-                text ?? string.Empty, _gridData, _selectedRowIndex, _selectedCellColumn, RequestCellFocus);
-
-            if (writtenColumn is not null && rowFilled >= 0)
-                _cellProvenance[(rowFilled, writtenColumn)] = new CellProvenance(imagePath, box.ImageBounds);
-
-            StatusMessage = writtenColumn is not null
-                ? $"Region {box.Id} → {writtenColumn}: \"{text}\""
-                : $"Region {box.Id}: \"{text}\"";
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Region {box.Id} OCR failed: {ex.Message}";
-        }
-        finally
-        {
-            _instantOcrGate.Release();
-        }
+        StatusMessage = $"Region {box.Id} added. Draw more or click Run OCR to process.";
     }
 
     [RelayCommand]
@@ -432,7 +334,6 @@ public partial class MainViewModel : ViewBaseModel
                 table.Columns.Add(h);
 
             _gridData = table;
-            _cellProvenance.Clear();   // columns/rows changed — old provenance is invalid
             OnPropertyChanged(nameof(GridView));
             OnPropertyChanged(nameof(HasGridData));
 
@@ -517,13 +418,6 @@ public partial class MainViewModel : ViewBaseModel
         _selectedCellColumn = columnName;
         _selectedRowIndex = rowIndex;
     }
-
-    /// <summary>
-    /// Looks up the source image + region that produced a given cell's value, if it
-    /// was filled by OCR. Used by the verify view to show the crop next to the value.
-    /// </summary>
-    public bool TryGetCellProvenance(int rowIndex, string columnName, out CellProvenance provenance)
-        => _cellProvenance.TryGetValue((rowIndex, columnName), out provenance);
     #endregion
 
     
@@ -555,7 +449,6 @@ public partial class MainViewModel : ViewBaseModel
             StatusMessage = $"Failed to load image: {ex.Message}";
         }
     }
-}
 
-/// <summary>Source image + region rectangle that produced an OCR-filled cell.</summary>
-public readonly record struct CellProvenance(string ImagePath, System.Windows.Rect ImageBounds);
+
+}
