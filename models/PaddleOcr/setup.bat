@@ -1,15 +1,20 @@
 @echo off
 REM ============================================================
-REM  Setup PaddleOCR virtual environment for HandWritten OCR
-REM  Run this ONCE from the project root before using PaddleOCR.
+REM  setup.bat  —  PP-OCRv6 one-time setup
+REM  Run this ONCE from the project root (two levels up).
 REM  Requires Python 3.9-3.12 installed and on PATH.
 REM ============================================================
 
-set VENV_DIR=%~dp0HandWritten OCR\bin\Debug\net8.0-windows\PaddleVenv
+REM Resolve the project root (two directories up from models\PaddleOcr\)
+pushd "%~dp0..\.."
+set PROJECT_ROOT=%CD%
+popd
+
+set VENV_DIR=%PROJECT_ROOT%\HandWritten OCR\bin\Debug\net8.0-windows\PaddleVenv
 
 echo.
 echo ============================================================
-echo  Setting up PaddleOCR environment...
+echo  Setting up PP-OCRv6 environment...
 echo  Location: %VENV_DIR%
 echo ============================================================
 echo.
@@ -27,7 +32,7 @@ echo.
 echo [1/5] Creating virtual environment...
 python -m venv "%VENV_DIR%"
 if errorlevel 1 (
-    echo ERROR: Failed to create venv. Make sure Python 3.9-3.12 is installed.
+    echo ERROR: Failed to create venv.
     pause
     exit /b 1
 )
@@ -41,7 +46,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [3/5] Installing PaddlePaddle (CPU-only)...
+echo [3/5] Installing PaddlePaddle (CPU)...
 "%VENV_DIR%\Scripts\python.exe" -m pip install paddlepaddle
 if errorlevel 1 (
     echo ERROR: PaddlePaddle install failed.
@@ -62,7 +67,7 @@ if errorlevel 1 (
 echo Done.
 
 echo.
-echo [5/5] Installing Flask server dependencies...
+echo [5/5] Installing Flask and Pillow...
 "%VENV_DIR%\Scripts\python.exe" -m pip install flask flask-cors pillow
 if errorlevel 1 (
     echo ERROR: Flask/Pillow install failed.
@@ -73,11 +78,11 @@ echo Done.
 
 echo.
 echo ============================================================
-echo  Installed packages:
+echo  Setup complete! Installed packages:
 "%VENV_DIR%\Scripts\python.exe" -m pip list | findstr /i "paddle flask pillow"
 echo.
 echo  Venv: %VENV_DIR%
 echo.
-echo  PP-OCRv6 models (~15 MB) will auto-download on first OCR run.
+echo  PP-OCRv6 models will auto-download on first OCR run.
 echo ============================================================
 pause
