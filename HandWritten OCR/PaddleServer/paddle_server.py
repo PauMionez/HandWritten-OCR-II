@@ -1,4 +1,4 @@
-"""PaddleOCR Server — PP-OCRv6 via paddleocr package (port 5002)."""
+"""PaddleOCR 3.x Server — PP-OCRv6 via paddleocr package (port 5002)."""
 import os, sys, base64, logging, tempfile, traceback
 from pathlib import Path
 from datetime import datetime
@@ -9,6 +9,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 _MODELS_DIR = (_SCRIPT_DIR if _SCRIPT_DIR.name.lower() == "paddleocr"
                else _SCRIPT_DIR.parent / "models" / "PaddleOcr")
 _MODELS_DIR.mkdir(parents=True, exist_ok=True)
+os.environ["PADDLEX_HOME"] = str(_MODELS_DIR)
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 _LOGS_DIR = _SCRIPT_DIR.parent / "logs"
@@ -34,100 +35,52 @@ HOST = "127.0.0.1"
 app  = Flask(__name__)
 CORS(app)
 
-_ocr = None  # loaded on first OCR request
+_OCR_CACHE = {}  # lang -> PaddleOCR instance
+
+SUPPORTED_LANGS = {
+    "en":     "English",
+    "ch":     "Chinese (Simplified)",
+    "french": "French",
+    "german": "German",
+}
 
 
-def _patch_mkldnn():
-    """Disable oneDNN before paddle loads — fixes PIR crash on Windows CPU."""
-    try:
-        import paddle.inference as _pi
-        import paddle as _pd
-        _Orig = _pi.Config
-        def _no_mkldnn(*a, **kw):
-            c = _Orig(*a, **kw)
-            c.disable_mkldnn()
-            return c
-        _pi.Config = _no_mkldnn
-        _pd.inference.Config = _no_mkldnn
-        logger.info("MKLDNN patched.")
-    except Exception as e:
-        logger.warning("MKLDNN patch skipped: %s", e)
-
-
-def get_ocr():
-    global _ocr
-    if _ocr is None:
-        _patch_mkldnn()
+def get_ocr(lang="en"):
+    if lang not in _OCR_CACHE:
         from paddleocr import PaddleOCR
-        logger.info("Loading PaddleOCR engine...")
-        _ocr = PaddleOCR(
-            lang="en",
+        logger.info("Loading PaddleOCR for lang=%s...", lang)
+        _OCR_CACHE[lang] = PaddleOCR(
+            lang=lang,
             device="cpu",
+            cpu_threads=2,
+            enable_mkldnn=False,
+            use_doc_orientation_classify=False,
+            use_doc_unwarping=False,
+            use_textline_orientation=False,
         )
-        logger.info("PaddleOCR engine ready.")
-    return _ocr
-
-
-def _safe_str(v):
-    return str(v).strip() if v is not None else ""
-
-def _safe_float(v):
-    try:    return float(v)
-    except: return 0.0
+        logger.info("PaddleOCR ready for lang=%s", lang)
+    return _OCR_CACHE[lang]
 
 
 def _parse(result):
-    """Parse paddleocr 3.x result — list of OCRResult with rec_texts/rec_scores."""
+    """Extract lines from PaddleOCR 3.x predict() result."""
     lines = []
-    if result is None:
+    if not result:
         return lines
-    logger.info("Result type: %s  len: %s", type(result).__name__, len(result) if hasattr(result, '__len__') else '?')
-    for res in result:
-        if res is None:
-            continue
-        logger.info("  res type: %s", type(res).__name__)
-        # paddleocr 3.x / paddlex: OCRResult with rec_texts / rec_scores attributes
-        if isinstance(res, dict):
-            rec_texts  = res.get("rec_texts")
-            rec_scores = res.get("rec_scores")
-        else:
-            rec_texts  = getattr(res, "rec_texts",  None)
-            rec_scores = getattr(res, "rec_scores", None)
-
-        if rec_texts is not None:
-            logger.info("  rec_texts count: %d", len(rec_texts))
-            if rec_scores is None:
-                rec_scores = [0.0] * len(rec_texts)
-            for t, s in zip(rec_texts, rec_scores):
-                text = _safe_str(t)
-                if text:
-                    lines.append({"text": text, "confidence": round(_safe_float(s), 4)})
-            continue
-
-        # boxes layout
-        boxes = res.get("boxes") if isinstance(res, dict) else getattr(res, "boxes", None)
-        if boxes is not None:
-            logger.info("  boxes count: %d", len(boxes))
-            for box in boxes:
-                if isinstance(box, dict):
-                    text  = _safe_str(box.get("rec_text"))
-                    score = _safe_float(box.get("rec_score", 0))
-                else:
-                    text  = _safe_str(getattr(box, "rec_text",  None))
-                    score = _safe_float(getattr(box, "rec_score", 0))
-                if text:
-                    lines.append({"text": text, "confidence": round(score, 4)})
-            continue
-
-        logger.info("  unrecognised result shape — attrs: %s", [a for a in dir(res) if not a.startswith('_')])
+    page = result[0] if isinstance(result, list) else result
+    texts  = page.get("rec_texts",  []) if isinstance(page, dict) else []
+    scores = page.get("rec_scores", []) if isinstance(page, dict) else []
+    for text, score in zip(texts, scores):
+        if str(text).strip():
+            lines.append({"text": str(text), "confidence": round(float(score), 4)})
     return lines
 
 
-def run_ocr(image_path, region=None):
+def run_ocr(image_path, lang="en", region=None):
     try:
         img = Image.open(image_path).convert("RGB")
 
-        if region is not None and isinstance(region, dict):
+        if region and isinstance(region, dict):
             rx = int(float(region.get("x", 0)))
             ry = int(float(region.get("y", 0)))
             rw = int(float(region.get("w", 0)))
@@ -141,7 +94,7 @@ def run_ocr(image_path, region=None):
             tmp_path = tmp.name
 
         try:
-            result = get_ocr().ocr(tmp_path)
+            result = list(get_ocr(lang).predict(tmp_path))
         finally:
             try: os.unlink(tmp_path)
             except: pass
@@ -150,18 +103,18 @@ def run_ocr(image_path, region=None):
         full_text = "\n".join(l["text"] for l in lines)
         logger.info("OCR done — %d lines, %d chars", len(lines), len(full_text))
         return {"success": True, "text": full_text, "lines": lines,
-                "line_count": len(lines), "lang_used": "en", "error": None}
+                "line_count": len(lines), "lang_used": lang, "error": None}
 
     except Exception as ex:
         logger.error("OCR failed: %s\n%s", ex, traceback.format_exc())
         return {"success": False, "text": "", "lines": [], "line_count": 0,
-                "lang_used": "en", "error": str(ex)}
+                "lang_used": lang, "error": str(ex)}
 
 
 @app.route("/health")
 def health():
     return jsonify({"status": "ok", "port": PORT,
-                    "engine_ready": _ocr is not None})
+                    "loaded_langs": list(_OCR_CACHE.keys())})
 
 
 @app.route("/ocr/base64", methods=["POST"])
@@ -169,6 +122,10 @@ def ocr_base64():
     data = request.get_json(force=True)
     if not data or "image_base64" not in data:
         return jsonify({"success": False, "error": "Missing image_base64"}), 400
+
+    lang = data.get("lang", "en")
+    if lang not in SUPPORTED_LANGS:
+        lang = "en"
 
     try:
         raw = base64.b64decode(data["image_base64"])
@@ -178,7 +135,7 @@ def ocr_base64():
         return jsonify({"success": False, "error": "Decode error: " + str(ex)}), 400
 
     try:
-        return jsonify(run_ocr(tmp_path, region=data.get("region")))
+        return jsonify(run_ocr(tmp_path, lang=lang, region=data.get("region")))
     finally:
         try: os.unlink(tmp_path)
         except: pass
@@ -186,7 +143,8 @@ def ocr_base64():
 
 if __name__ == "__main__":
     logger.info("=" * 55)
-    logger.info("  PaddleOCR Server  http://%s:%d", HOST, PORT)
-    logger.info("  paddleocr package  |  engine loads on first request")
+    logger.info("  PaddleOCR 3.x Server  http://%s:%d", HOST, PORT)
+    logger.info("  Models: %s", _MODELS_DIR)
+    logger.info("  Langs : %s", ", ".join(SUPPORTED_LANGS.keys()))
     logger.info("=" * 55)
     app.run(host=HOST, port=PORT, debug=False, threaded=True)

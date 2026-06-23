@@ -15,7 +15,7 @@ public sealed class PaddleOcrService : IPaddleOcrService
         CancellationToken cancellationToken = default)
     {
         var bytes = await File.ReadAllBytesAsync(imagePath, cancellationToken);
-        return await PostOcrAsync(Convert.ToBase64String(bytes), null, cancellationToken);
+        return await PostOcrAsync(Convert.ToBase64String(bytes), lang, null, cancellationToken);
     }
 
     public async Task<string> RecognizeRegionAsync(string imagePath, Rect pixelBounds, string lang,
@@ -29,13 +29,13 @@ public sealed class PaddleOcrService : IPaddleOcrService
             w = (int)pixelBounds.Width,
             h = (int)pixelBounds.Height,
         };
-        return await PostOcrAsync(Convert.ToBase64String(bytes), region, cancellationToken);
+        return await PostOcrAsync(Convert.ToBase64String(bytes), lang, region, cancellationToken);
     }
 
-    private static async Task<string> PostOcrAsync(string imageBase64, object? region,
+    private static async Task<string> PostOcrAsync(string imageBase64, string lang, object? region,
         CancellationToken cancellationToken)
     {
-        var json = JsonSerializer.Serialize(new { image_base64 = imageBase64, region });
+        var json = JsonSerializer.Serialize(new { image_base64 = imageBase64, lang, region });
         using var content = new StringContent(json, Encoding.UTF8, "application/json");
         using var resp = await _client.PostAsync(OcrUrl, content, cancellationToken);
         resp.EnsureSuccessStatusCode();
