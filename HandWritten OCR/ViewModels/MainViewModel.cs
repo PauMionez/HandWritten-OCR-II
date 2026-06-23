@@ -228,6 +228,42 @@ public partial class MainViewModel : ViewBaseModel
                     StatusMessage = $"Done — {RegionBoxes.Count} region(s) processed.";
                 }
             }
+            else if (SelectedEngine == OcrEngine.KrakenHTR)
+            {
+                if (!IsKrakenServerReady)
+                {
+                    StatusMessage = "Kraken server is not ready yet — please wait for the green dot.";
+                    return;
+                }
+                string modelName = GetKrakenModelName(SelectedKrakenModelIndex);
+
+                if (RegionBoxes.Count == 0)
+                {
+                    string result = await _krakenService.RecognizeAsync(_currentImagePath, modelName);
+                    OcrText = result;
+                    HasResult = !string.IsNullOrWhiteSpace(result);
+                    StatusMessage = result.Length > 0
+                        ? $"Done — {result.Length} characters recognized."
+                        : "Done — no text detected.";
+                    dataHelp.FillSelectedCell(result, _gridData, _selectedRowIndex, _selectedCellColumn, RequestCellFocus);
+                }
+                else
+                {
+                    var parts = new List<string>(RegionBoxes.Count);
+                    for (int i = 0; i < RegionBoxes.Count; i++)
+                    {
+                        RegionBox box = RegionBoxes[i];
+                        StatusMessage = $"Processing region {i + 1} of {RegionBoxes.Count}...";
+                        box.ExtractedText = await _krakenService.RecognizeRegionAsync(
+                            _currentImagePath, box.ImageBounds, modelName);
+                        parts.Add($"[Region {box.Id}]\n{box.ExtractedText}");
+                        dataHelp.FillSelectedCell(box.ExtractedText ?? string.Empty, _gridData, _selectedRowIndex, _selectedCellColumn, RequestCellFocus);
+                    }
+                    OcrText = string.Join("\n\n", parts);
+                    HasResult = !string.IsNullOrWhiteSpace(OcrText);
+                    StatusMessage = $"Done — {RegionBoxes.Count} region(s) processed.";
+                }
+            }
             else // PaddleOCR
             {
                 if (!IsPaddleServerReady)
