@@ -19,6 +19,8 @@ public partial class MainViewModel : ViewBaseModel
     private readonly IOcrService _ocrService;
     private readonly IKrakenService _krakenService;
     private readonly KrakenServerManager _krakenServerManager;
+    private readonly IPaddleOcrService _paddleOcrService;
+    private readonly PaddleServerManager _paddleServerManager;
     private readonly ExcelService _excelService = new();
     private readonly string _modelFolder;
     private string? _currentImagePath;
@@ -67,14 +69,23 @@ public partial class MainViewModel : ViewBaseModel
     [ObservableProperty] private double _imageRotation = 0;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsKrakenSelected), nameof(IsTrOcrSelected))]
+    [NotifyPropertyChangedFor(nameof(IsKrakenSelected), nameof(IsTrOcrSelected), nameof(IsPaddleOcrSelected))]
     private OcrEngine _selectedEngine = OcrEngine.TrOCR;
 
     [ObservableProperty] private int _selectedKrakenModelIndex = 0;
+    [ObservableProperty] private int _selectedPaddleLangIndex = 0;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(KrakenServerStatusText))]
     private bool _isKrakenServerReady;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PaddleServerStatusText))]
+    private bool _isPaddleServerReady;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PaddleServerStatusText))]
+    private bool _isPaddleServerStarting;
 
     public bool IsKrakenSelected
     {
@@ -88,7 +99,19 @@ public partial class MainViewModel : ViewBaseModel
         set { if (value) SelectedEngine = OcrEngine.TrOCR; }
     }
 
+    public bool IsPaddleOcrSelected
+    {
+        get => SelectedEngine == OcrEngine.PaddleOCR;
+        set { if (value) SelectedEngine = OcrEngine.PaddleOCR; }
+    }
+
     public string KrakenServerStatusText => IsKrakenServerReady ? "Kraken server ready" : "Kraken server starting...";
+    public string PaddleServerStatusText =>
+        IsPaddleServerReady                          ? "PaddleOCR ready" :
+        IsPaddleServerStarting                       ? "PaddleOCR starting (may take ~1 min)..." :
+        !_paddleServerManager.IsVenvInstalled        ? "Not installed — run setup_paddle_venv.bat" :
+        !_paddleServerManager.IsScriptDeployed       ? "Rebuild project to deploy server script" :
+                                                       "Starting...";
 
     public ObservableCollection<RegionBox> RegionBoxes { get; } = new();
     public bool HasRegionBoxes => RegionBoxes.Count > 0;
@@ -99,14 +122,19 @@ public partial class MainViewModel : ViewBaseModel
     public MainViewModel() : this(
         new TrOcrService(),
         new KrakenService(),
-        App.KrakenServerManager)
+        App.KrakenServerManager,
+        new PaddleOcrService(),
+        App.PaddleServerManager)
     { }
 
-    public MainViewModel(IOcrService ocrService, IKrakenService krakenService, KrakenServerManager krakenServerManager)
+    public MainViewModel(IOcrService ocrService, IKrakenService krakenService, KrakenServerManager krakenServerManager,
+                         IPaddleOcrService paddleOcrService, PaddleServerManager paddleServerManager)
     {
-        _ocrService = ocrService;
-        _krakenService = krakenService;
-        _krakenServerManager = krakenServerManager;
+        _ocrService           = ocrService;
+        _krakenService        = krakenService;
+        _krakenServerManager  = krakenServerManager;
+        _paddleOcrService     = paddleOcrService;
+        _paddleServerManager  = paddleServerManager;
         _modelFolder = Path.Combine(AppContext.BaseDirectory, "models", "TrOcr");
         RegionBoxes.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasRegionBoxes));
         ImageList.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasImageList));
@@ -114,6 +142,32 @@ public partial class MainViewModel : ViewBaseModel
         IsKrakenServerReady = _krakenServerManager.IsReady;
         _krakenServerManager.IsReadyChanged += ready =>
             Application.Current.Dispatcher.Invoke(() => IsKrakenServerReady = ready);
+
+        IsPaddleServerReady    = _paddleServerManager.IsReady;
+        IsPaddleServerStarting = _paddleServerManager.IsStarting;
+        _paddleServerManager.IsReadyChanged    += ready   =>
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                IsPaddleServerReady    = ready;
+                IsPaddleServerStarting = _paddleServerManager.IsStarting;
+                OnPropertyChanged(nameof(PaddleServerStatusText));
+            });
+        _paddleServerManager.IsStartingChanged += starting =>
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                IsPaddleServerStarting = starting;
+                OnPropertyChanged(nameof(PaddleServerStatusText));
+            });
+    }
+
+    partial void OnSelectedEngineChanged(OcrEngine value)
+    {
+        OnPropertyChanged(nameof(PaddleServerStatusText));
+        // Start PaddleOCR server whenever the user selects it and it isn't running yet
+        if (value == OcrEngine.PaddleOCR &&
+            !_paddleServerManager.IsReady &&
+            !_paddleServerManager.IsStarting)
+            _ = _paddleServerManager.StartAsync();
     }
 
     partial void OnIsRegionModeChanged(bool value)
@@ -196,8 +250,13 @@ public partial class MainViewModel : ViewBaseModel
                     StatusMessage = $"Done — {RegionBoxes.Count} region(s) processed.";
                 }
             }
-            else // KrakenHTR
+            else if (SelectedEngine == OcrEngine.KrakenHTR)
             {
+                if (!IsKrakenServerReady)
+                {
+                    StatusMessage = "Kraken server is not ready yet — please wait for the green dot.";
+                    return;
+                }
                 string modelName = GetKrakenModelName(SelectedKrakenModelIndex);
 
                 if (RegionBoxes.Count == 0)
@@ -227,6 +286,47 @@ public partial class MainViewModel : ViewBaseModel
                     StatusMessage = $"Done — {RegionBoxes.Count} region(s) processed.";
                 }
             }
+            else // PaddleOCR
+            {
+                if (!IsPaddleServerReady)
+                {
+                    StatusMessage = IsPaddleServerStarting
+                        ? "PaddleOCR is still starting up — please wait for the green dot."
+                        : "PaddleOCR server not running. Select PaddleOCR engine first to start it.";
+                    return;
+                }
+                string lang = GetPaddleLang(SelectedPaddleLangIndex);
+
+                if (RegionBoxes.Count == 0)
+                {
+                    string result = await _paddleOcrService.RecognizeAsync(_currentImagePath, lang);
+                    OcrText = result;
+                    HasResult = !string.IsNullOrWhiteSpace(result);
+                    StatusMessage = result.Length > 0
+                        ? $"Done — {result.Length} characters recognized."
+                        : "Done — no text detected.";
+                    dataHelp.FillSelectedCell(result, _gridData, _selectedRowIndex, _selectedCellColumn, RequestCellFocus);
+                }
+                else
+                {
+                    var parts = new List<string>(RegionBoxes.Count);
+                    for (int i = 0; i < RegionBoxes.Count; i++)
+                    {
+                        RegionBox box = RegionBoxes[i];
+                        StatusMessage = $"Processing region {i + 1} of {RegionBoxes.Count}...";
+                        box.ExtractedText = await _paddleOcrService.RecognizeRegionAsync(
+                            _currentImagePath, box.ImageBounds, lang);
+                        parts.Add($"[Region {box.Id}]\n{box.ExtractedText}");
+                        int rowFilled = _selectedRowIndex;
+                        string? writtenColumn = dataHelp.FillSelectedCell(box.ExtractedText ?? string.Empty, _gridData, _selectedRowIndex, _selectedCellColumn, RequestCellFocus);
+                        if (writtenColumn is not null && rowFilled >= 0)
+                            _cellProvenance[(rowFilled, writtenColumn)] = new CellProvenance(_currentImagePath, box.ImageBounds);
+                    }
+                    OcrText = string.Join("\n\n", parts);
+                    HasResult = !string.IsNullOrWhiteSpace(OcrText);
+                    StatusMessage = $"Done — {RegionBoxes.Count} region(s) processed.";
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -246,6 +346,14 @@ public partial class MainViewModel : ViewBaseModel
         2 => "catmus-print-fondue-large",
         3 => "lectaurep_base",
         _ => "mccatmus_v1"
+    };
+
+    private static string GetPaddleLang(int index) => index switch
+    {
+        1 => "ch",
+        2 => "french",
+        3 => "german",
+        _ => "en"
     };
 
     [RelayCommand]
@@ -323,14 +431,28 @@ public partial class MainViewModel : ViewBaseModel
             string? imagePath = _currentImagePath;
             if (imagePath is null) return;
 
-            if (!_ocrService.IsModelLoaded)
-            {
-                StatusMessage = "Loading TrOCR models (first run may take a moment)...";
-                await _ocrService.LoadModelsAsync(_modelFolder);
-            }
-
             StatusMessage = $"Recognizing region {box.Id}...";
-            string text = await _ocrService.RecognizeRegionAsync(imagePath, box.ImageBounds);
+            string text;
+
+            if (SelectedEngine == OcrEngine.TrOCR)
+            {
+                if (!_ocrService.IsModelLoaded)
+                {
+                    StatusMessage = "Loading TrOCR models (first run may take a moment)...";
+                    await _ocrService.LoadModelsAsync(_modelFolder);
+                }
+                text = await _ocrService.RecognizeRegionAsync(imagePath, box.ImageBounds);
+            }
+            else if (SelectedEngine == OcrEngine.KrakenHTR)
+            {
+                string modelName = GetKrakenModelName(SelectedKrakenModelIndex);
+                text = await _krakenService.RecognizeRegionAsync(imagePath, box.ImageBounds, modelName);
+            }
+            else // PaddleOCR
+            {
+                string lang = GetPaddleLang(SelectedPaddleLangIndex);
+                text = await _paddleOcrService.RecognizeRegionAsync(imagePath, box.ImageBounds, lang);
+            }
             box.ExtractedText = text;
 
             // Mirror all region results into the Recognized Text panel.

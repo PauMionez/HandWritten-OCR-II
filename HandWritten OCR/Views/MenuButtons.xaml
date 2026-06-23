@@ -31,6 +31,9 @@
                          GroupName="OcrEngine" VerticalAlignment="Center" Margin="0,0,6,0"/>
             <RadioButton Content="Kraken HTR"
                          IsChecked="{Binding IsKrakenSelected, Mode=TwoWay}"
+                         GroupName="OcrEngine" VerticalAlignment="Center" Margin="0,0,6,0"/>
+            <RadioButton Content="PaddleOCR"
+                         IsChecked="{Binding IsPaddleOcrSelected, Mode=TwoWay}"
                          GroupName="OcrEngine" VerticalAlignment="Center"/>
 
             <!-- Model selector — visible when Kraken HTR is selected -->
@@ -41,6 +44,16 @@
                 <ComboBoxItem Content="TRIDIS v2 (Parish/Legal 11-16c)"/>
                 <ComboBoxItem Content="CATMuS Medieval (French/Italian 12-15c)"/>
                 <ComboBoxItem Content="LECTAUREP (Modern French 19-20c)"/>
+            </ComboBox>
+
+            <!-- Language selector — visible when PaddleOCR is selected -->
+            <ComboBox SelectedIndex="{Binding SelectedPaddleLangIndex}"
+                      Margin="12,0,0,0" MinWidth="160" VerticalAlignment="Center"
+                      Visibility="{Binding IsPaddleOcrSelected, Converter={StaticResource BoolToVis}}">
+                <ComboBoxItem Content="English ★"/>
+                <ComboBoxItem Content="Chinese (Simplified)"/>
+                <ComboBoxItem Content="French"/>
+                <ComboBoxItem Content="German"/>
             </ComboBox>
 
             <!-- Server status indicator — visible when Kraken HTR is selected -->
@@ -60,6 +73,27 @@
                     </Ellipse.Style>
                 </Ellipse>
                 <TextBlock Text="{Binding KrakenServerStatusText}" FontSize="11"
+                           VerticalAlignment="Center"
+                           Foreground="{DynamicResource SecondaryTextBrush}"/>
+            </StackPanel>
+
+            <!-- Server status indicator — visible when PaddleOCR is selected -->
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center"
+                        Margin="12,0,0,0"
+                        Visibility="{Binding IsPaddleOcrSelected, Converter={StaticResource BoolToVis}}">
+                <Ellipse Width="8" Height="8" VerticalAlignment="Center" Margin="0,0,5,0">
+                    <Ellipse.Style>
+                        <Style TargetType="Ellipse">
+                            <Setter Property="Fill" Value="Orange"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsPaddleServerReady}" Value="True">
+                                    <Setter Property="Fill" Value="#2ECC71"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Ellipse.Style>
+                </Ellipse>
+                <TextBlock Text="{Binding PaddleServerStatusText}" FontSize="11"
                            VerticalAlignment="Center"
                            Foreground="{DynamicResource SecondaryTextBrush}"/>
             </StackPanel>
