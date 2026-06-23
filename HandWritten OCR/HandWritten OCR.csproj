@@ -21,9 +21,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="KrakenServer\**\*">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
     <Content Include="PaddleServer\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
