@@ -6,6 +6,7 @@ from PIL import Image
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 _SCRIPT_DIR = Path(__file__).resolve().parent
+_MODELS_DIR  = Path.home() / ".paddlex" / "official_models"
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 _LOGS_DIR = _SCRIPT_DIR.parent / "logs"

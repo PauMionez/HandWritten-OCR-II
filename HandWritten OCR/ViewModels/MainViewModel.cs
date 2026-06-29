@@ -318,8 +318,8 @@ public partial class MainViewModel : ViewBaseModel
                 _cellProvenance[(rowFilled, writtenColumn)] = new CellProvenance(imagePath, box.ImageBounds);
 
             StatusMessage = writtenColumn is not null
-                ? $"Region {box.Id} → {writtenColumn}: \"{text}\""
-                : $"Region {box.Id}: \"{text}\"";
+                ? $"Region {box.Id} OCR done → {writtenColumn}"
+                : $"Region {box.Id} OCR done — {text.Length} chars";
         }
         catch (Exception ex)
         {
