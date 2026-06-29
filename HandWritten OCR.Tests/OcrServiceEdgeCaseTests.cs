@@ -1,64 +1,72 @@
 using HandWritten_OCR.Services;
-using System.Windows;
 using Xunit;
 
 namespace HandWritten_OCR.Tests;
 
 /// <summary>
-/// Regression tests for TrOcrService edge-case behaviour.
-/// These tests do NOT require model files to be present.
+/// Regression tests for PaddleServerManager initial state and lifecycle.
+/// These tests do NOT require a running Python server.
 /// </summary>
 public class OcrServiceEdgeCaseTests
 {
-    // ── Guard: models must be loaded before inference ─────────────────────────
+    // ── Initial state ─────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task RecognizeAsync_WhenModelsNotLoaded_ThrowsInvalidOperationException()
+    public void PaddleServerManager_InitialIsReady_IsFalse()
     {
-        using var svc = new TrOcrService();
-
-        await Assert.ThrowsAsync<InvalidOperationException>(
-            () => svc.RecognizeAsync("any_file.png"));
+        using var mgr = new PaddleServerManager();
+        Assert.False(mgr.IsReady);
     }
 
     [Fact]
-    public async Task RecognizeRegionAsync_WhenModelsNotLoaded_ThrowsInvalidOperationException()
+    public void PaddleServerManager_InitialIsStarting_IsFalse()
     {
-        using var svc = new TrOcrService();
-
-        await Assert.ThrowsAsync<InvalidOperationException>(
-            () => svc.RecognizeRegionAsync("any_file.png", new Rect(0, 0, 100, 100)));
+        using var mgr = new PaddleServerManager();
+        Assert.False(mgr.IsStarting);
     }
 
     [Fact]
-    public async Task RecognizeRegionAsync_WithEmptyRect_WhenModelsNotLoaded_ThrowsInvalidOperationException()
+    public void PaddleServerManager_IsVenvInstalled_FalseWhenPathMissing()
     {
-        using var svc = new TrOcrService();
-
-        // Rect.Empty is a degenerate rect — the guard should still fire before we
-        // attempt to open the file, so the same exception is expected.
-        await Assert.ThrowsAsync<InvalidOperationException>(
-            () => svc.RecognizeRegionAsync("any_file.png", Rect.Empty));
+        // In the test environment PaddleVenv is not next to the test runner binary
+        using var mgr = new PaddleServerManager();
+        Assert.False(mgr.IsVenvInstalled);
     }
-
-    // ── IsModelLoaded state ───────────────────────────────────────────────────
 
     [Fact]
-    public void IsModelLoaded_BeforeLoadModelsAsync_IsFalse()
+    public void PaddleServerManager_IsScriptDeployed_FalseWhenPathMissing()
     {
-        using var svc = new TrOcrService();
-        Assert.False(svc.IsModelLoaded);
+        using var mgr = new PaddleServerManager();
+        Assert.False(mgr.IsScriptDeployed);
     }
 
-    // ── Dispose safety ────────────────────────────────────────────────────────
+    // ── StartAsync guard: no-ops when venv/script missing ─────────────────────
+
+    [Fact]
+    public async Task StartAsync_WhenVenvMissing_DoesNotSetIsStarting()
+    {
+        using var mgr = new PaddleServerManager();
+        await mgr.StartAsync();
+        Assert.False(mgr.IsStarting);
+        Assert.False(mgr.IsReady);
+    }
+
+    // ── Stop safety ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Stop_WhenNeverStarted_DoesNotThrow()
+    {
+        using var mgr = new PaddleServerManager();
+        var ex = Record.Exception(() => mgr.Stop());
+        Assert.Null(ex);
+    }
 
     [Fact]
     public void Dispose_CanBeCalledMultipleTimes_NoException()
     {
-        var svc = new TrOcrService();
-        svc.Dispose();
-        // second Dispose must not throw
-        var ex = Record.Exception(() => svc.Dispose());
+        var mgr = new PaddleServerManager();
+        mgr.Dispose();
+        var ex = Record.Exception(() => mgr.Dispose());
         Assert.Null(ex);
     }
 }

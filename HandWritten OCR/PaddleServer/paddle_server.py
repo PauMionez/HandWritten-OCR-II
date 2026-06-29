@@ -6,10 +6,6 @@ from PIL import Image
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 _SCRIPT_DIR = Path(__file__).resolve().parent
-_MODELS_DIR = (_SCRIPT_DIR if _SCRIPT_DIR.name.lower() == "paddleocr"
-               else _SCRIPT_DIR.parent / "models" / "PaddleOcr")
-_MODELS_DIR.mkdir(parents=True, exist_ok=True)
-os.environ["PADDLEX_HOME"] = str(_MODELS_DIR)
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 _LOGS_DIR = _SCRIPT_DIR.parent / "logs"

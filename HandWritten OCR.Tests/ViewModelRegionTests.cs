@@ -11,56 +11,43 @@ namespace HandWritten_OCR.Tests;
 
 /// <summary>
 /// Unit + regression tests for the region-selection logic in MainViewModel.
-/// A hand-rolled FakeOcrService avoids any dependency on Moq.
+/// A hand-rolled FakePaddleOcrService avoids any dependency on Moq.
 /// </summary>
 public class ViewModelRegionTests
 {
     // ── Fake service ──────────────────────────────────────────────────────────
 
-    private sealed class FakeOcrService : IOcrService
+    private sealed class FakePaddleOcrService : IPaddleOcrService
     {
-        public bool IsModelLoaded { get; set; } = true;
         public string FullImageResult  { get; set; } = "full image text";
         public string RegionResult     { get; set; } = "region text";
         public int    RecognizeCallCount       { get; private set; }
         public int    RecognizeRegionCallCount { get; private set; }
         public List<Rect> RegionBoundsReceived { get; } = new();
 
-        public Task LoadModelsAsync(string _) => Task.CompletedTask;
-
-        public Task<string> RecognizeAsync(string _, CancellationToken __ = default)
+        public Task<string> RecognizeAsync(string _, string lang, CancellationToken __ = default)
         {
             RecognizeCallCount++;
             return Task.FromResult(FullImageResult);
         }
 
-        public Task<string> RecognizeRegionAsync(string _, Rect bounds, CancellationToken __ = default)
+        public Task<string> RecognizeRegionAsync(string _, Rect bounds, string lang, CancellationToken __ = default)
         {
             RecognizeRegionCallCount++;
             RegionBoundsReceived.Add(bounds);
             return Task.FromResult(RegionResult);
         }
-
-        public Task<IReadOnlyList<string>> RecognizeRegionsAsync(
-            string _, IReadOnlyList<Rect> regions, IProgress<int>? progress = null,
-            CancellationToken __ = default)
-        {
-            var results = new string[regions.Count];
-            for (int i = 0; i < regions.Count; i++)
-            {
-                RecognizeRegionCallCount++;
-                RegionBoundsReceived.Add(regions[i]);
-                results[i] = RegionResult;
-                progress?.Report(i);
-            }
-            return Task.FromResult<IReadOnlyList<string>>(results);
-        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private static MainViewModel BuildVm(FakeOcrService? svc = null) =>
-        new MainViewModel(svc ?? new FakeOcrService());
+    private static MainViewModel BuildVm(FakePaddleOcrService? svc = null)
+    {
+        var vm = new MainViewModel(svc ?? new FakePaddleOcrService(), new PaddleServerManager());
+        // Mark server ready so RunOcrAsync is not blocked by the readiness guard
+        vm.IsPaddleServerReady = true;
+        return vm;
+    }
 
     // Set the private _currentImagePath field so RunOcrAsync can proceed.
     private static void SetImagePath(MainViewModel vm, string? path) =>
@@ -158,7 +145,7 @@ public class ViewModelRegionTests
     [Fact]
     public void AddRegion_WithImageLoaded_RecognizesRegionImmediately()
     {
-        var fake = new FakeOcrService { RegionResult = "Sept" };
+        var fake = new FakePaddleOcrService { RegionResult = "Sept" };
         var vm = BuildVm(fake);
         SetImagePath(vm, "dummy.png");
 
@@ -172,7 +159,7 @@ public class ViewModelRegionTests
     [Fact]
     public void AddRegion_WithNoImageLoaded_DoesNotRecognize()
     {
-        var fake = new FakeOcrService();
+        var fake = new FakePaddleOcrService();
         var vm = BuildVm(fake);
         // no image path set — instant OCR must be skipped
 
@@ -229,12 +216,12 @@ public class ViewModelRegionTests
         Assert.False(vm.HasResult);
     }
 
-    // ── RunOcrAsync branching (regression: must not break full-image path) ────
+    // ── RunOcrAsync branching ─────────────────────────────────────────────────
 
     [Fact]
     public async Task RunOcrAsync_WhenCurrentImagePathIsNull_DoesNotCallService()
     {
-        var fake = new FakeOcrService();
+        var fake = new FakePaddleOcrService();
         var vm = BuildVm(fake);
         // _currentImagePath is null by default — the guard must short-circuit
 
@@ -247,7 +234,7 @@ public class ViewModelRegionTests
     [Fact]
     public async Task RunOcrAsync_WithNoRegions_CallsRecognizeAsyncOnly()
     {
-        var fake = new FakeOcrService { FullImageResult = "full text" };
+        var fake = new FakePaddleOcrService { FullImageResult = "full text" };
         var vm = BuildVm(fake);
         SetImagePath(vm, "dummy.png");
 
@@ -262,7 +249,7 @@ public class ViewModelRegionTests
     [Fact]
     public async Task RunOcrAsync_WithNoRegions_EmptyResult_HasResultIsFalse()
     {
-        var fake = new FakeOcrService { FullImageResult = "" };
+        var fake = new FakePaddleOcrService { FullImageResult = "" };
         var vm = BuildVm(fake);
         SetImagePath(vm, "dummy.png");
 
@@ -274,12 +261,11 @@ public class ViewModelRegionTests
     [Fact]
     public async Task RunOcrAsync_WithOneRegion_CallsRecognizeRegionAsync()
     {
-        var fake = new FakeOcrService { RegionResult = "handwriting" };
+        var fake = new FakePaddleOcrService { RegionResult = "handwriting" };
         var vm = BuildVm(fake);
         SetImagePath(vm, "dummy.png");
         vm.AddRegionCommand.Execute(new RegionBox { ImageBounds = new Rect(0, 0, 100, 100) });
 
-        // AddRegion already ran instant OCR once; Run OCR must re-process the region.
         int beforeRun = fake.RecognizeRegionCallCount;
         await RunOcrAsync(vm);
 
@@ -290,7 +276,7 @@ public class ViewModelRegionTests
     [Fact]
     public async Task RunOcrAsync_WithTwoRegions_CallsRecognizeRegionAsyncTwice()
     {
-        var fake = new FakeOcrService();
+        var fake = new FakePaddleOcrService();
         var vm = BuildVm(fake);
         SetImagePath(vm, "dummy.png");
         vm.AddRegionCommand.Execute(new RegionBox { ImageBounds = new Rect(0,  0, 100, 100) });
@@ -305,7 +291,7 @@ public class ViewModelRegionTests
     [Fact]
     public async Task RunOcrAsync_WithRegions_OcrTextContainsRegionLabels()
     {
-        var fake = new FakeOcrService { RegionResult = "the quick fox" };
+        var fake = new FakePaddleOcrService { RegionResult = "the quick fox" };
         var vm = BuildVm(fake);
         SetImagePath(vm, "dummy.png");
         vm.AddRegionCommand.Execute(new RegionBox { ImageBounds = new Rect(0, 0, 100, 100) });
@@ -320,7 +306,7 @@ public class ViewModelRegionTests
     [Fact]
     public async Task RunOcrAsync_WithTwoRegions_BothLabelsInOcrText()
     {
-        var fake = new FakeOcrService { RegionResult = "text" };
+        var fake = new FakePaddleOcrService { RegionResult = "text" };
         var vm = BuildVm(fake);
         SetImagePath(vm, "dummy.png");
         vm.AddRegionCommand.Execute(new RegionBox { ImageBounds = new Rect(0,   0, 100, 100) });
@@ -335,7 +321,7 @@ public class ViewModelRegionTests
     [Fact]
     public async Task RunOcrAsync_WithRegions_SetsExtractedTextOnEachBox()
     {
-        var fake = new FakeOcrService { RegionResult = "written text" };
+        var fake = new FakePaddleOcrService { RegionResult = "written text" };
         var vm = BuildVm(fake);
         SetImagePath(vm, "dummy.png");
         var box = new RegionBox { ImageBounds = new Rect(0, 0, 100, 100) };
@@ -349,7 +335,7 @@ public class ViewModelRegionTests
     [Fact]
     public async Task RunOcrAsync_WithRegions_PassesCorrectBoundsToService()
     {
-        var fake = new FakeOcrService();
+        var fake = new FakePaddleOcrService();
         var vm = BuildVm(fake);
         SetImagePath(vm, "dummy.png");
         var expectedBounds = new Rect(10, 20, 300, 150);
@@ -357,7 +343,6 @@ public class ViewModelRegionTests
 
         await RunOcrAsync(vm);
 
-        // Both the instant OCR (on add) and Run OCR pass the same region bounds.
         Assert.NotEmpty(fake.RegionBoundsReceived);
         Assert.All(fake.RegionBoundsReceived, b => Assert.Equal(expectedBounds, b));
     }
@@ -365,10 +350,10 @@ public class ViewModelRegionTests
     [Fact]
     public async Task RunOcrAsync_DisablesRegionModeBeforeProcessing()
     {
-        var fake = new FakeOcrService();
+        var fake = new FakePaddleOcrService();
         var vm = BuildVm(fake);
         SetImagePath(vm, "dummy.png");
-        vm.ToggleRegionModeCommand.Execute(null);  // IsRegionMode = true
+        vm.ToggleRegionModeCommand.Execute(null);
         vm.AddRegionCommand.Execute(new RegionBox { ImageBounds = new Rect(0, 0, 100, 100) });
 
         await RunOcrAsync(vm);
@@ -396,7 +381,6 @@ public class ViewModelRegionTests
                 vm.AddRegionCommand.Execute(new RegionBox { ImageBounds = new Rect(0, 0, 50, 50) });
                 countBeforeLoad = vm.RegionBoxes.Count;
 
-                // Create a minimal valid PNG so BitmapImage can load it
                 string tmp = Path.ChangeExtension(Path.GetTempFileName(), ".png");
                 try
                 {
@@ -406,8 +390,8 @@ public class ViewModelRegionTests
                     var dropCmd = (IAsyncRelayCommand)vm.DropImageCommand;
                     dropCmd.ExecuteAsync(tmp).GetAwaiter().GetResult();
 
-                    boxesClearedAfterLoad     = vm.RegionBoxes.Count == 0;
-                    regionModeResetAfterLoad  = !vm.IsRegionMode;
+                    boxesClearedAfterLoad    = vm.RegionBoxes.Count == 0;
+                    regionModeResetAfterLoad = !vm.IsRegionMode;
                 }
                 finally { if (File.Exists(tmp)) File.Delete(tmp); }
             }
