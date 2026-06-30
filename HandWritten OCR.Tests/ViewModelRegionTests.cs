@@ -15,7 +15,17 @@ namespace HandWritten_OCR.Tests;
 /// </summary>
 public class ViewModelRegionTests
 {
-    // ── Fake service ──────────────────────────────────────────────────────────
+    // ── Fake services ─────────────────────────────────────────────────────────
+
+    private sealed class FakeOcrService : IOcrService
+    {
+        public bool IsModelLoaded { get; set; } = true;
+        public Task LoadModelsAsync(string modelFolder) => Task.CompletedTask;
+        public Task<string> RecognizeAsync(string _, CancellationToken __ = default) => Task.FromResult(string.Empty);
+        public Task<string> RecognizeRegionAsync(string _, Rect bounds, CancellationToken __ = default) => Task.FromResult(string.Empty);
+        public Task<IReadOnlyList<string>> RecognizeRegionsAsync(string _, IReadOnlyList<Rect> regions, IProgress<int>? progress = null, CancellationToken __ = default)
+            => Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
+    }
 
     private sealed class FakePaddleOcrService : IPaddleOcrService
     {
@@ -43,8 +53,9 @@ public class ViewModelRegionTests
 
     private static MainViewModel BuildVm(FakePaddleOcrService? svc = null)
     {
-        var vm = new MainViewModel(svc ?? new FakePaddleOcrService(), new PaddleServerManager());
-        // Mark server ready so RunOcrAsync is not blocked by the readiness guard
+        var vm = new MainViewModel(new FakeOcrService(), svc ?? new FakePaddleOcrService(), new PaddleServerManager());
+        // Select PaddleOCR and mark server ready so RunOcrAsync is not blocked
+        vm.IsPaddleOcrSelected = true;
         vm.IsPaddleServerReady = true;
         return vm;
     }

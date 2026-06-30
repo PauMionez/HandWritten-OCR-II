@@ -16,9 +16,11 @@ namespace HandWritten_OCR.ViewModels;
 
 public partial class MainViewModel : ViewBaseModel
 {
+    private readonly IOcrService _ocrService;
     private readonly IPaddleOcrService _paddleOcrService;
     private readonly PaddleServerManager _paddleServerManager;
     private readonly ExcelService _excelService = new();
+    private readonly string _modelFolder;
     private string? _currentImagePath;
 
     // Remembers which image region produced each filled cell, so a future verify
@@ -64,6 +66,10 @@ public partial class MainViewModel : ViewBaseModel
     [ObservableProperty] private bool _isRegionMode;
     [ObservableProperty] private double _imageRotation = 0;
 
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsTrOcrSelected), nameof(IsPaddleOcrSelected))]
+    private OcrEngine _selectedEngine = OcrEngine.TrOCR;
+
     [ObservableProperty] private int _selectedPaddleLangIndex = 0;
 
     [ObservableProperty]
@@ -74,12 +80,24 @@ public partial class MainViewModel : ViewBaseModel
     [NotifyPropertyChangedFor(nameof(PaddleServerStatusText))]
     private bool _isPaddleServerStarting;
 
+    public bool IsTrOcrSelected
+    {
+        get => SelectedEngine == OcrEngine.TrOCR;
+        set { if (value) SelectedEngine = OcrEngine.TrOCR; }
+    }
+
+    public bool IsPaddleOcrSelected
+    {
+        get => SelectedEngine == OcrEngine.PaddleOCR;
+        set { if (value) SelectedEngine = OcrEngine.PaddleOCR; }
+    }
+
     public string PaddleServerStatusText =>
-        IsPaddleServerReady              ? "PaddleOCR ready" :
-        IsPaddleServerStarting           ? "Starting (may take ~1 min)..." :
-        !_paddleServerManager.IsVenvInstalled   ? "Not installed — run setup_paddle_venv.bat" :
-        !_paddleServerManager.IsScriptDeployed  ? "Rebuild project to deploy server script" :
-                                                  "Starting...";
+        IsPaddleServerReady                          ? "PaddleOCR ready" :
+        IsPaddleServerStarting                       ? "PaddleOCR starting (may take ~1 min)..." :
+        !_paddleServerManager.IsVenvInstalled        ? "Not installed — run setup_paddle_venv.bat" :
+        !_paddleServerManager.IsScriptDeployed       ? "Rebuild project to deploy server script" :
+                                                       "Starting...";
 
     public ObservableCollection<RegionBox> RegionBoxes { get; } = new();
     public bool HasRegionBoxes => RegionBoxes.Count > 0;
@@ -88,14 +106,18 @@ public partial class MainViewModel : ViewBaseModel
     #endregion
 
     public MainViewModel() : this(
+        new TrOcrService(),
         new PaddleOcrService(),
         App.PaddleServerManager)
     { }
 
-    public MainViewModel(IPaddleOcrService paddleOcrService, PaddleServerManager paddleServerManager)
+    public MainViewModel(IOcrService ocrService, IPaddleOcrService paddleOcrService,
+                         PaddleServerManager paddleServerManager)
     {
+        _ocrService          = ocrService;
         _paddleOcrService    = paddleOcrService;
         _paddleServerManager = paddleServerManager;
+        _modelFolder = Path.Combine(AppContext.BaseDirectory, "models", "TrOcr");
         RegionBoxes.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasRegionBoxes));
         ImageList.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasImageList));
 
@@ -114,9 +136,16 @@ public partial class MainViewModel : ViewBaseModel
                 IsPaddleServerStarting = starting;
                 OnPropertyChanged(nameof(PaddleServerStatusText));
             });
+    }
 
-        // PaddleOCR is the only engine — start the server immediately on launch
-        _ = _paddleServerManager.StartAsync();
+    partial void OnSelectedEngineChanged(OcrEngine value)
+    {
+        OnPropertyChanged(nameof(PaddleServerStatusText));
+        // Start PaddleOCR server whenever the user selects it and it isn't running yet
+        if (value == OcrEngine.PaddleOCR &&
+            !_paddleServerManager.IsReady &&
+            !_paddleServerManager.IsStarting)
+            _ = _paddleServerManager.StartAsync();
     }
 
     partial void OnIsRegionModeChanged(bool value)
@@ -161,6 +190,45 @@ public partial class MainViewModel : ViewBaseModel
         {
             DataGridHelper dataHelp = new DataGridHelper();
 
+            if (SelectedEngine == OcrEngine.TrOCR)
+            {
+                if (!_ocrService.IsModelLoaded)
+                {
+                    StatusMessage = "Loading TrOCR models (first run may take a moment)...";
+                    await _ocrService.LoadModelsAsync(_modelFolder);
+                }
+
+                if (RegionBoxes.Count == 0)
+                {
+                    string result = await _ocrService.RecognizeAsync(_currentImagePath);
+                    OcrText = result;
+                    HasResult = !string.IsNullOrWhiteSpace(result);
+                    StatusMessage = result.Length > 0
+                        ? $"Done — {result.Length} characters recognized."
+                        : "Done — no text detected.";
+                    dataHelp.FillSelectedCell(result, _gridData, _selectedRowIndex, _selectedCellColumn, RequestCellFocus);
+                }
+                else
+                {
+                    var parts = new List<string>(RegionBoxes.Count);
+                    for (int i = 0; i < RegionBoxes.Count; i++)
+                    {
+                        RegionBox box = RegionBoxes[i];
+                        StatusMessage = $"Processing region {i + 1} of {RegionBoxes.Count}...";
+                        box.ExtractedText = await _ocrService.RecognizeRegionAsync(
+                            _currentImagePath, box.ImageBounds);
+                        parts.Add($"[Region {box.Id}]\n{box.ExtractedText}");
+                        int rowFilled = _selectedRowIndex;
+                        string? writtenColumn = dataHelp.FillSelectedCell(box.ExtractedText ?? string.Empty, _gridData, _selectedRowIndex, _selectedCellColumn, RequestCellFocus);
+                        if (writtenColumn is not null && rowFilled >= 0)
+                            _cellProvenance[(rowFilled, writtenColumn)] = new CellProvenance(_currentImagePath, box.ImageBounds);
+                    }
+                    OcrText = string.Join("\n\n", parts);
+                    HasResult = !string.IsNullOrWhiteSpace(OcrText);
+                    StatusMessage = $"Done — {RegionBoxes.Count} region(s) processed.";
+                }
+            }
+            else // PaddleOCR
             {
                 if (!IsPaddleServerReady)
                 {
@@ -298,8 +366,22 @@ public partial class MainViewModel : ViewBaseModel
             if (imagePath is null) return;
 
             StatusMessage = $"Recognizing region {box.Id}...";
-            string lang = GetPaddleLang(SelectedPaddleLangIndex);
-            string text = await _paddleOcrService.RecognizeRegionAsync(imagePath, box.ImageBounds, lang);
+            string text;
+
+            if (SelectedEngine == OcrEngine.TrOCR)
+            {
+                if (!_ocrService.IsModelLoaded)
+                {
+                    StatusMessage = "Loading TrOCR models (first run may take a moment)...";
+                    await _ocrService.LoadModelsAsync(_modelFolder);
+                }
+                text = await _ocrService.RecognizeRegionAsync(imagePath, box.ImageBounds);
+            }
+            else // PaddleOCR
+            {
+                string lang = GetPaddleLang(SelectedPaddleLangIndex);
+                text = await _paddleOcrService.RecognizeRegionAsync(imagePath, box.ImageBounds, lang);
+            }
             box.ExtractedText = text;
 
             // Mirror all region results into the Recognized Text panel.

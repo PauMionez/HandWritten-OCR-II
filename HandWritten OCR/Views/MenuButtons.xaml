@@ -21,20 +21,32 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- Language + status row -->
+        <!-- Engine / model / status row -->
         <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,6">
+            <TextBlock Text="OCR Engine:" VerticalAlignment="Center"
+                       Margin="0,0,8,0" FontSize="12"
+                       Foreground="{DynamicResource SecondaryTextBrush}"/>
+            <RadioButton Content="TrOCR"
+                         IsChecked="{Binding IsTrOcrSelected, Mode=TwoWay}"
+                         GroupName="OcrEngine" VerticalAlignment="Center" Margin="0,0,6,0"/>
+            <RadioButton Content="PaddleOCR"
+                         IsChecked="{Binding IsPaddleOcrSelected, Mode=TwoWay}"
+                         GroupName="OcrEngine" VerticalAlignment="Center"/>
 
-            <!-- Language selector -->
+            <!-- Language selector — visible when PaddleOCR is selected -->
             <ComboBox SelectedIndex="{Binding SelectedPaddleLangIndex}"
-                      MinWidth="160" VerticalAlignment="Center">
+                      Margin="12,0,0,0" MinWidth="160" VerticalAlignment="Center"
+                      Visibility="{Binding IsPaddleOcrSelected, Converter={StaticResource BoolToVis}}">
                 <ComboBoxItem Content="English ★"/>
                 <ComboBoxItem Content="Chinese (Simplified)"/>
                 <ComboBoxItem Content="French"/>
                 <ComboBoxItem Content="German"/>
             </ComboBox>
 
-            <!-- Server status indicator -->
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+            <!-- Server status indicator — visible when PaddleOCR is selected -->
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center"
+                        Margin="12,0,0,0"
+                        Visibility="{Binding IsPaddleOcrSelected, Converter={StaticResource BoolToVis}}">
                 <Ellipse Width="8" Height="8" VerticalAlignment="Center" Margin="0,0,5,0">
                     <Ellipse.Style>
                         <Style TargetType="Ellipse">
